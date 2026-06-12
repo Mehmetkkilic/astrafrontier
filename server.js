@@ -105,6 +105,8 @@ const RESPAWN_S = 3;
 const REGEN_DELAY_S = 4;
 const REGEN_RATE = 16;
 const MAX_PLAYERS = 10;
+const KILL_TARGET = parseInt(process.env.KILL_TARGET || '20', 10);   // maçı kazanma hedefi
+const MATCH_END_S = 10;                                              // sonuç ekranı süresi
 
 const SPAWNS = [
   [0, 38], [-35, -28], [38, -24], [-30, 16], [24, 30], [18, -32], [-22, 2]
@@ -123,7 +125,7 @@ function findRoom() {
   for (const r of rooms.values()) {
     if (r.players.size < MAX_PLAYERS) return r;
   }
-  const r = { id: 'oda-' + (++roomSeq), players: new Map() };
+  const r = { id: 'oda-' + (++roomSeq), players: new Map(), phase: 'play', endT: 0 };
   rooms.set(r.id, r);
   return r;
 }
@@ -308,6 +310,7 @@ function rayAABB(ox, oy, oz, dx, dy, dz, minX, minY, minZ, maxX, maxY, maxZ) {
 }
 
 function serverFire(room, p, pitch) {
+  if (room.phase !== 'play') return;   // maç arası ateş yok
   const now = Date.now();
   if (now - p.lastFire < FIRE_MIN_MS) return;   // hız hilesi reddi
   p.lastFire = now;
@@ -358,6 +361,12 @@ function serverFire(room, p, pitch) {
       victim.deaths++;
       p.kills++;
       io.to(victim.id).emit('die', { by: p.name });
+      io.to(room.id).emit('kill', { a: p.name, v: victim.name, hs: dmg === HEAD_DMG });
+      if (p.kills >= KILL_TARGET && room.phase === 'play') {
+        room.phase = 'end';
+        room.endT = MATCH_END_S;
+        io.to(room.id).emit('matchEnd', { w: p.name });
+      }
     }
   }
 }
@@ -422,12 +431,28 @@ setInterval(() => {
   for (const room of rooms.values()) {
     if (humanCount(room) === 0) { rooms.delete(room.id); continue; }
 
-    // Bot zekası: girdi üretir, sonra herkesle aynı hareket kodundan geçer
-    for (const p of room.players.values()) {
-      if (p.isBot && !p.dead) botAI(p, room, TICK_DT);
-    }
+    if (room.phase === 'end') {
+      // Sonuç ekranı: herkes donuk, geri sayım → yeni maç
+      room.endT -= TICK_DT;
+      if (room.endT <= 0) {
+        for (const p of room.players.values()) {
+          const sp = randomSpawn();
+          p.x = sp[0]; p.z = sp[1];
+          p.vx = 0; p.vz = 0;
+          p.hp = 100; p.dead = false; p.respawnT = 0; p.sinceHit = 99;
+          p.kills = 0; p.deaths = 0;
+          if (p.isBot) { p.ai.los = false; pickPatrol(p); }
+        }
+        room.phase = 'play';
+        io.to(room.id).emit('matchStart', {});
+      }
+    } else {
+      // Bot zekası: girdi üretir, sonra herkesle aynı hareket kodundan geçer
+      for (const p of room.players.values()) {
+        if (p.isBot && !p.dead) botAI(p, room, TICK_DT);
+      }
 
-    for (const p of room.players.values()) {
+      for (const p of room.players.values()) {
       // Respawn
       if (p.dead) {
         p.respawnT -= TICK_DT;
@@ -462,10 +487,12 @@ setInterval(() => {
         p.hp = Math.min(100, p.hp + REGEN_RATE * TICK_DT);
       }
     }
+    }
 
     // Snapshot yayını
     const snap = {
       t: Date.now(),
+      ph: room.phase === 'end' ? 1 : 0,
       p: []
     };
     for (const p of room.players.values()) {
