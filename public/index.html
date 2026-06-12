@@ -150,7 +150,7 @@
     color: #cfe8d8; font-family: 'Consolas', monospace; font-size: 13px;
     background: rgba(10,14,18,0.6); border: 1px solid rgba(120,200,160,0.2);
     border-radius: 6px; padding: 6px 12px;
-    user-select: none; pointer-events: none;
+    user-select: none; pointer-events: auto; cursor: pointer;
   }
   #score .k { color: #4ade80; font-weight: 700; }
   #score .d { color: #f87171; font-weight: 700; }
@@ -190,6 +190,59 @@
     color: #f87171; opacity: 0;
     pointer-events: none;
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  }
+
+  /* ---- Kill feed ---- */
+  #killfeed {
+    position: fixed; top: 14px; left: 50%;
+    transform: translateX(-50%);
+    text-align: center; pointer-events: none;
+    font-family: 'Consolas', monospace; font-size: 13px;
+  }
+  #killfeed .kf {
+    background: rgba(10, 14, 18, 0.6);
+    border-radius: 4px; padding: 3px 12px; margin-top: 4px;
+    color: #dfe9e3; transition: opacity 0.5s;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  }
+  #killfeed .a { color: #4ade80; }
+  #killfeed .v { color: #f87171; }
+
+  /* ---- Skor tablosu ---- */
+  #scoreboard {
+    position: fixed; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(8, 10, 12, 0.5);
+    z-index: 8; pointer-events: none;
+  }
+  #sbBox {
+    background: rgba(12, 17, 15, 0.94);
+    border: 1px solid rgba(120, 200, 160, 0.3);
+    border-radius: 10px; padding: 18px 28px; min-width: 320px;
+    font-family: 'Consolas', monospace; color: #dfe9e3;
+  }
+  #sbWin {
+    display: none; text-align: center;
+    color: #4ade80; font-size: 20px; font-weight: 700;
+    letter-spacing: 2px; margin-bottom: 10px;
+  }
+  #sbTitle {
+    text-align: center; font-size: 13px; letter-spacing: 3px;
+    color: #9ab3a5; margin-bottom: 10px;
+  }
+  #sbRows { font-size: 14px; line-height: 1.9; }
+  #sbRows .row { display: flex; gap: 14px; }
+  #sbRows .nm { flex: 1; }
+  #sbRows .st { width: 36px; text-align: right; }
+  #sbRows .hd { color: #6b8577; font-size: 12px; }
+  #sbRows .me { color: #4ade80; }
+
+  /* ---- Yeniden doğuş geri sayımı ---- */
+  #deathSub {
+    position: fixed; top: calc(38% + 48px); width: 100%;
+    text-align: center; font-size: 16px; letter-spacing: 3px;
+    color: #e8c4c4; pointer-events: none;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
   }
 
   /* ---- Başlangıç overlay ---- */
@@ -262,6 +315,15 @@
 <div id="vignette"></div>
 <canvas id="minimap"></canvas>
 <div id="deathMsg">ELİMİNE OLDUN</div>
+<div id="deathSub"></div>
+<div id="killfeed"></div>
+<div id="scoreboard">
+  <div id="sbBox">
+    <div id="sbWin"></div>
+    <div id="sbTitle">SKOR TABLOSU — İLK 20</div>
+    <div id="sbRows"></div>
+  </div>
+</div>
 
 <div id="overlay">
   <h1>ASTRA <span>FRONTIER</span></h1>
@@ -751,7 +813,7 @@
     }
 
     // Tetik basılı → otomatik atış; şarjör boşsa otomatik reload
-    if (gun.trigger && !gun.reloading && gun.cooldown <= 0) {
+    if (gun.trigger && !gun.reloading && gun.cooldown <= 0 && !selfDead && !matchFrozen) {
       if (gun.mag > 0) shoot();
       else startReload();
     }
@@ -843,8 +905,25 @@
     const mesh = new THREE.Mesh(soldierGeom,
       new THREE.MeshBasicMaterial({ vertexColors: true }));
     mesh.userData.remote = true;
+    // İsim etiketi: canvas → sprite, her zaman kameraya bakar
+    const nc = document.createElement('canvas');
+    nc.width = 256; nc.height = 64;
+    const nx = nc.getContext('2d');
+    nx.font = 'bold 26px Consolas, monospace';
+    const tw = Math.min(236, nx.measureText(name || '?').width + 26);
+    nx.fillStyle = 'rgba(10, 14, 18, 0.55)';
+    nx.fillRect((256 - tw) / 2, 14, tw, 36);
+    nx.fillStyle = '#e8f2ec';
+    nx.textAlign = 'center'; nx.textBaseline = 'middle';
+    nx.fillText(name || '?', 128, 32);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(nc), transparent: true
+    }));
+    sprite.scale.set(1.7, 0.42, 1);
+    sprite.position.y = 2.05;
+    mesh.add(sprite);
     scene.add(mesh);
-    const r = { id, name: name || '?', mesh, buf: [], dead: false, bobT: 0 };
+    const r = { id, name: name || '?', mesh, sprite, buf: [], dead: false, bobT: 0 };
     remotes.set(id, r);
     return r;
   }
@@ -852,10 +931,53 @@
     const r = remotes.get(id);
     if (r) {
       scene.remove(r.mesh);
+      r.sprite.material.map.dispose();
+      r.sprite.material.dispose();
       r.mesh.material.dispose();
       remotes.delete(id);
     }
   }
+
+  // --- Maç / ölüm durumu ---
+  let selfDead = false, matchFrozen = false, respawnCd = 0;
+  let myName = 'Asker';
+  let sbHold = false, sbForced = false;
+  const sbEl = document.getElementById('scoreboard');
+  const sbRowsEl = document.getElementById('sbRows');
+  const sbWinEl = document.getElementById('sbWin');
+  const kfEl = document.getElementById('killfeed');
+  const dsEl = document.getElementById('deathSub');
+  let lastList = [];
+
+  function setSbVisible() {
+    sbEl.style.display = (sbHold || sbForced) ? 'flex' : 'none';
+    if (sbHold || sbForced) renderScoreboard();
+  }
+  function renderScoreboard() {
+    const list = lastList.slice().sort((a, b) => b.k - a.k || a.d - b.d);
+    let html = '<div class="row hd"><span class="nm">OYUNCU</span>' +
+               '<span class="st">K</span><span class="st">D</span></div>';
+    for (const p of list) {
+      const me = p.id === myId ? ' me' : '';
+      html += `<div class="row${me}"><span class="nm${me}">${p.n}</span>` +
+              `<span class="st">${p.k}</span><span class="st">${p.d}</span></div>`;
+    }
+    sbRowsEl.innerHTML = html;
+  }
+  function addKillFeed(a, v, hs) {
+    const div = document.createElement('div');
+    div.className = 'kf';
+    div.innerHTML = `<span class="a">${a}</span> ${hs ? '☠' : '⟶'} <span class="v">${v}</span>`;
+    kfEl.appendChild(div);
+    while (kfEl.children.length > 4) kfEl.removeChild(kfEl.firstChild);
+    setTimeout(() => { div.style.opacity = 0; }, 3200);
+    setTimeout(() => { if (div.parentNode) div.parentNode.removeChild(div); }, 3800);
+  }
+  document.getElementById('score').addEventListener('click', () => {
+    if (!playing) return;
+    sbHold = !sbHold;
+    setSbVisible();
+  });
 
   // --- HUD durumu (can/skor artık SUNUCU verisi) ---
   let playerHp = 100, kills = 0, deaths = 0;
@@ -901,6 +1023,7 @@
       return;
     }
     const name = (document.getElementById('nameInp').value || 'Asker').trim().slice(0, 14);
+    myName = name;
     socket = io();
     socket.on('init', (d) => { myId = d.id; });
     socket.on('snap', onSnap);
@@ -909,6 +1032,19 @@
       shotSound(0.14, 900);
     });
     socket.on('hitConfirm', (d) => showHitmarker(!!(d && d.kill)));
+    socket.on('kill', (d) => { if (d) addKillFeed(d.a, d.v, d.hs); });
+    socket.on('matchEnd', (d) => {
+      sbForced = true;
+      sbWinEl.style.display = 'block';
+      sbWinEl.textContent = '🏆 KAZANAN: ' + ((d && d.w) || '?');
+      setSbVisible();
+    });
+    socket.on('matchStart', () => {
+      sbForced = false;
+      sbWinEl.style.display = 'none';
+      kfEl.innerHTML = '';
+      setSbVisible();
+    });
     socket.on('dmg', (d) => {
       if (!d) return;
       if (d.hp < playerHp) vigOp = Math.min(0.9, vigOp + 0.5);
@@ -931,6 +1067,10 @@
 
   function onSnap(s) {
     if (!s || !s.p) return;
+    lastList = s.p;
+    matchFrozen = s.ph === 1;
+    if (s.ph === 1 && !sbForced) { sbForced = true; setSbVisible(); }   // geç katılan da görsün
+    if (sbHold || sbForced) renderScoreboard();
     const seen = new Set();
     for (const p of s.p) {
       seen.add(p.id);
@@ -939,6 +1079,23 @@
         if (p.k !== kills) { kills = p.k; killEl.textContent = kills; }
         if (p.d !== deaths) { deaths = p.d; deathEl.textContent = deaths; }
         if (Math.abs(p.hp - playerHp) > 0.5) { playerHp = p.hp; updateHealthHud(); }
+
+        // Ölüm/yeniden doğuş geçişleri — temiz ışınlanma, lastik bant yok
+        const isDead = !!p.dead;
+        if (isDead && !selfDead) {
+          selfDead = true;
+          respawnCd = 3;
+          deathMsgT = 1.6;
+        } else if (!isDead && selfDead) {
+          selfDead = false;
+          player.pos.set(p.x, 1.7, p.z);   // doğrudan yeni spawn'a geç
+          player.vel.set(0, 0, 0);
+          dsEl.textContent = '';
+          deathMsgT = 0; dmEl.style.opacity = 0;
+          vigOp = 0; vigEl.style.opacity = 0;
+        }
+        if (selfDead) continue;   // ölüyken pozisyon uzlaşması yapma
+
         const ex = p.x - player.pos.x, ez = p.z - player.pos.z;
         const err = Math.hypot(ex, ez);
         if (err > 3) {
@@ -990,6 +1147,7 @@
       if (spd > 0.5 && !r.dead) r.bobT += dt * 6;
       r.mesh.rotation.y = yw;
       r.mesh.rotation.z = r.dead ? Math.PI / 2 : 0;
+      r.sprite.visible = !r.dead;
       r.mesh.position.set(x, r.dead ? 0 : Math.abs(Math.sin(r.bobT)) * 0.05, z);
     }
     // HUD zamanlayıcı sönümleri
@@ -1204,6 +1362,11 @@
   function onKeyDown(e) {
     if (e.target && e.target.tagName === 'INPUT') return;   // isim girişi serbest
     const code = normCode(e);
+    if (code === 'Tab') {
+      e.preventDefault();
+      if (playing && !sbHold) { sbHold = true; setSbVisible(); }
+      return;
+    }
     keys[code] = true;
     // Tarayıcının WASD/Space/Shift'i yakalamasını engelle
     if (['KeyW','KeyA','KeyS','KeyD','KeyR','Space','ShiftLeft','Digit1','Digit2','Digit3'].includes(code)) {
@@ -1214,7 +1377,16 @@
     if (code === 'Digit3') setRenderScale(0.65);
     if (code === 'KeyR' && playing) startReload();
   }
-  function onKeyUp(e) { keys[normCode(e)] = false; }
+  function onKeyUp(e) {
+    const code = normCode(e);
+    if (code === 'Tab') {
+      e.preventDefault();
+      sbHold = false;
+      setSbVisible();
+      return;
+    }
+    keys[code] = false;
+  }
 
   // Hem window hem document hem canvas — odak nerede olursa olsun yakala
   window.addEventListener('keydown', onKeyDown, true);
@@ -1254,6 +1426,20 @@
   }
 
   function updatePlayer(dt) {
+    // Ölü veya maç arası: bakış serbest, hareket kilitli.
+    // Bu donma, ölümdeki "lastik bant" takılmasını kökünden çözer:
+    // istemci sunucuyla kavga etmez, respawn tek temiz ışınlanmadır.
+    if (selfDead || matchFrozen) {
+      player.vel.set(0, 0, 0);
+      if (selfDead && respawnCd > 0) {
+        respawnCd -= dt;
+        dsEl.textContent = 'Yeniden doğuş: ' + Math.max(1, Math.ceil(respawnCd));
+      }
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = yaw;
+      camera.rotation.x = pitch;
+      return;
+    }
     const speed = keys['ShiftLeft'] ? player.runSpeed : player.walkSpeed;
     const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
     const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
