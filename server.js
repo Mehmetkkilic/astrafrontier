@@ -108,6 +108,17 @@ const MAX_PLAYERS = 10;
 const KILL_TARGET = parseInt(process.env.KILL_TARGET || '20', 10);   // maçı kazanma hedefi
 const MATCH_END_S = 10;                                              // sonuç ekranı süresi
 
+// --- EKONOMİ ---
+const START_MONEY = 400;
+const KILL_REWARD = 300;
+const HS_BONUS = 100;        // headshot bonusu
+const KNIFE_BONUS = 200;     // bıçak kill bonusu
+const WIN_REWARD = 1000;     // maç galibi
+const LOSE_REWARD = 250;     // diğer herkes
+const AMMO_COST = 100;
+const STATIONS = [[-5.5, -11], [30, 18]];   // tedarik istasyonları (istemciyle aynı)
+const BUY_RANGE = 3.5;
+
 const SPAWNS = [
   [0, 38], [-35, -28], [38, -24], [-30, 16], [24, 30], [18, -32], [-22, 2]
 ];
@@ -139,6 +150,7 @@ function makePlayer(id, name) {
     yaw: 0,
     hp: 100, dead: false, respawnT: 0, sinceHit: 99,
     kills: 0, deaths: 0,
+    money: START_MONEY,
     lastFire: 0,
     input: { wx: 0, wz: 0, sp: false, yaw: 0 }
   };
@@ -309,6 +321,59 @@ function rayAABB(ox, oy, oz, dx, dy, dz, minX, minY, minZ, maxX, maxY, maxZ) {
   return tmin;
 }
 
+// Hasar + kill + ekonomi: tüm silahlar buradan geçer
+function applyDamage(room, attacker, victim, dmg, hs, tag) {
+  victim.hp -= dmg;
+  victim.sinceHit = 0;
+  io.to(victim.id).emit('dmg', { hp: Math.max(0, victim.hp) });
+  const kill = victim.hp <= 0;
+  io.to(attacker.id).emit('hitConfirm', { kill });
+  if (kill) {
+    victim.dead = true;
+    victim.respawnT = RESPAWN_S;
+    victim.deaths++;
+    attacker.kills++;
+    attacker.money += KILL_REWARD + (hs ? HS_BONUS : 0) + (tag === 'knife' ? KNIFE_BONUS : 0);
+    io.to(victim.id).emit('die', { by: attacker.name });
+    io.to(room.id).emit('kill', { a: attacker.name, v: victim.name, hs: hs, w: tag });
+    if (attacker.kills >= KILL_TARGET && room.phase === 'play') {
+      room.phase = 'end';
+      room.endT = MATCH_END_S;
+      // Maç sonu ödülleri
+      for (const q of room.players.values()) {
+        q.money += (q === attacker) ? WIN_REWARD : LOSE_REWARD;
+      }
+      io.to(room.id).emit('matchEnd', { w: attacker.name });
+    }
+  }
+}
+
+// Bıçak: 2.2 m menzil, ~60° ön koni; kurban sırtı dönükse tek vuruş
+function serverKnife(room, p) {
+  if (room.phase !== 'play') return;
+  const now = Date.now();
+  if (now - p.lastFire < 400) return;
+  p.lastFire = now;
+  io.to(room.id).except(p.id).emit('knife', { id: p.id });
+
+  const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
+  let victim = null, vd = 2.2;
+  for (const q of room.players.values()) {
+    if (q === p || q.dead) continue;
+    const dx = q.x - p.x, dz = q.z - p.z;
+    const d = Math.hypot(dx, dz);
+    if (d < vd) {
+      const dot = (dx * fx + dz * fz) / (d || 1);
+      if (dot > 0.5) { victim = q; vd = d; }
+    }
+  }
+  if (victim && losClear(p.x, p.z, victim.x, victim.z)) {
+    const vfx = -Math.sin(victim.yaw), vfz = -Math.cos(victim.yaw);
+    const behind = ((victim.x - p.x) * vfx + (victim.z - p.z) * vfz) > 0;   // sırtı dönük
+    applyDamage(room, p, victim, behind ? 100 : 55, false, 'knife');
+  }
+}
+
 function serverFire(room, p, pitch) {
   if (room.phase !== 'play') return;   // maç arası ateş yok
   const now = Date.now();
@@ -349,25 +414,8 @@ function serverFire(room, p, pitch) {
 
   if (victim) {
     const hitY = oy + dy * victimT;
-    const dmg = hitY > 1.35 ? HEAD_DMG : BODY_DMG;
-    victim.hp -= dmg;
-    victim.sinceHit = 0;
-    io.to(victim.id).emit('dmg', { hp: Math.max(0, victim.hp) });
-    const kill = victim.hp <= 0;
-    io.to(p.id).emit('hitConfirm', { kill });
-    if (kill) {
-      victim.dead = true;
-      victim.respawnT = RESPAWN_S;
-      victim.deaths++;
-      p.kills++;
-      io.to(victim.id).emit('die', { by: p.name });
-      io.to(room.id).emit('kill', { a: p.name, v: victim.name, hs: dmg === HEAD_DMG });
-      if (p.kills >= KILL_TARGET && room.phase === 'play') {
-        room.phase = 'end';
-        room.endT = MATCH_END_S;
-        io.to(room.id).emit('matchEnd', { w: p.name });
-      }
-    }
+    const hs = hitY > 1.35;
+    applyDamage(room, p, victim, hs ? HEAD_DMG : BODY_DMG, hs, 'rifle');
   }
 }
 
@@ -405,12 +453,33 @@ io.on('connection', (socket) => {
 
   socket.on('fire', (d) => {
     if (!player || player.dead || !room || !d) return;
+    const yw = Number(d.yaw);
+    if (isFinite(yw)) player.yaw = yw;
+    if (d.wp === 0) {                      // bıçak
+      serverKnife(room, player);
+      return;
+    }
     let pitch = Number(d.pitch);
     if (!isFinite(pitch)) return;
     pitch = Math.max(-1.52, Math.min(1.52, pitch));
-    const yw = Number(d.yaw);
-    if (isFinite(yw)) player.yaw = yw;
     serverFire(room, player, pitch);
+  });
+
+  socket.on('buy', (d) => {
+    if (!player || player.dead || !room || room.phase !== 'play' || !d) return;
+    if (d.item !== 'ammo') return;
+    // İstasyon yakınlığı SUNUCUDA doğrulanır
+    let near = false;
+    for (const st of STATIONS) {
+      if (Math.hypot(player.x - st[0], player.z - st[1]) < BUY_RANGE) { near = true; break; }
+    }
+    if (!near) return;
+    if (player.money >= AMMO_COST) {
+      player.money -= AMMO_COST;
+      socket.emit('bought', { item: 'ammo', m: player.money });
+    } else {
+      socket.emit('denied', {});
+    }
   });
 
   socket.on('disconnect', () => {
@@ -503,6 +572,7 @@ setInterval(() => {
         yaw: Math.round(p.yaw * 1000) / 1000,
         hp: Math.round(p.hp),
         k: p.kills, d: p.deaths,
+        m: p.money,
         dead: p.dead ? 1 : 0
       });
     }
