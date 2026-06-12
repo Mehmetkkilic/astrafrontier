@@ -143,6 +143,149 @@ function makePlayer(id, name) {
 }
 
 // ---------------------------------------------------------------------
+// BOTLAR — oda 4 kişiye tamamlanır, insan girdikçe bot çıkar
+// ---------------------------------------------------------------------
+const BOT_NAMES = ['Kartal', 'Şahin', 'Atmaca', 'Doğan', 'Akbaba', 'Pars', 'Çakır', 'Bora'];
+const BOT_FILL = 4;
+let botSeq = 0;
+
+function makeBot() {
+  const b = makePlayer('bot-' + (++botSeq), 'Bot-' + BOT_NAMES[botSeq % BOT_NAMES.length]);
+  b.isBot = true;
+  b.ai = {
+    tx: 0, tz: 0,                 // devriye hedefi
+    burstCd: 2 + Math.random() * 2, burstLeft: 0, shotT: 0,
+    los: false, losT: 0,
+    strafeT: Math.random() * 6,
+    stuckT: 0, px: b.x, pz: b.z
+  };
+  pickPatrol(b);
+  return b;
+}
+function pickPatrol(b) {
+  b.ai.tx = -40 + Math.random() * 80;
+  b.ai.tz = -38 + Math.random() * 76;
+}
+
+function humanCount(room) {
+  let n = 0;
+  for (const p of room.players.values()) if (!p.isBot) n++;
+  return n;
+}
+
+function syncBots(room) {
+  const humans = humanCount(room);
+  const want = humans > 0 ? Math.max(0, BOT_FILL - humans) : 0;
+  const bots = [];
+  for (const p of room.players.values()) if (p.isBot) bots.push(p);
+  while (bots.length < want && room.players.size < MAX_PLAYERS) {
+    const b = makeBot();
+    room.players.set(b.id, b);
+    bots.push(b);
+  }
+  while (bots.length > want) {
+    const b = bots.pop();
+    room.players.delete(b.id);
+    io.to(room.id).emit('left', { id: b.id });
+  }
+}
+
+// Göz hizasında (1.55 m) yatay görüş hattı kontrolü
+function losClear(ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 0.001) return true;
+  const ndx = dx / dist, ndz = dz / dist;
+  for (const c of colliders) {
+    if (c.maxY < 1.55) continue;   // göz hizasının altındaki engeller görüşü kesmez
+    const t = rayAABB(ax, 1.55, az, ndx, 0, ndz, c.minX, 0, c.minZ, c.maxX, c.maxY, c.maxZ);
+    if (t >= 0 && t < dist) return false;
+  }
+  return true;
+}
+
+function botFire(room, b, target, dist) {
+  // Göğse nişan + mesafeyle artan sapma → isabet oranı doğal düşer
+  const dx = target.x - b.x, dz = target.z - b.z;
+  const spread = 0.02 + dist * 0.0012;
+  b.yaw = Math.atan2(-dx, -dz) + (Math.random() - 0.5) * spread * 2;
+  const horiz = Math.max(0.5, Math.hypot(dx, dz));
+  const pitch = Math.atan2(1.25 - 1.7, horiz) + (Math.random() - 0.5) * spread * 2;
+  serverFire(room, b, pitch);
+}
+
+function botAI(b, room, dt) {
+  const ai = b.ai;
+
+  // Hedef: en yakın canlı oyuncu (insan veya bot — FFA)
+  let best = null, bd = 1e9;
+  for (const q of room.players.values()) {
+    if (q === b || q.dead) continue;
+    const d = Math.hypot(q.x - b.x, q.z - b.z);
+    if (d < bd) { bd = d; best = q; }
+  }
+
+  // LOS her 4 tick'te bir (0.2 s) — maliyet dağıtımı
+  ai.losT++;
+  if (ai.losT >= 4) {
+    ai.losT = 0;
+    ai.los = !!best && bd < 48 && losClear(b.x, b.z, best.x, best.z);
+  }
+  if (!best) ai.los = false;
+
+  let wx = 0, wz = 0, mag = 0;
+
+  if (ai.los && best) {
+    // SAVAŞ: yüzünü dön, mesafe koru, yanal salın, burst at
+    const dx = best.x - b.x, dz = best.z - b.z;
+    b.input.yaw = Math.atan2(-dx, -dz);
+    ai.strafeT += dt;
+    const s = Math.sin(ai.strafeT * 1.3);
+    wx = (-dz / bd) * s; wz = (dx / bd) * s;
+    if (bd > 20) { wx += dx / bd; wz += dz / bd; }
+    else if (bd < 9) { wx -= dx / bd; wz -= dz / bd; }
+    mag = 0.45;   // ~3.2 m/s
+
+    if (ai.burstLeft > 0) {
+      ai.shotT -= dt;
+      if (ai.shotT <= 0) { botFire(room, b, best, bd); ai.burstLeft--; ai.shotT = 0.15; }
+    } else {
+      ai.burstCd -= dt;
+      if (ai.burstCd <= 0) {
+        ai.burstLeft = 3; ai.shotT = 0;
+        ai.burstCd = 1.6 + Math.random() * 1.6;
+      }
+    }
+  } else {
+    // DEVRİYE
+    const dxt = ai.tx - b.x, dzt = ai.tz - b.z;
+    const dtg = Math.hypot(dxt, dzt);
+    if (dtg < 2) pickPatrol(b);
+    else {
+      wx = dxt / dtg; wz = dzt / dtg;
+      b.input.yaw = Math.atan2(-dxt, -dzt);
+      mag = 0.35;   // ~2.4 m/s
+    }
+    // Takılma tespiti: pozisyon değişmiyorsa yeni hedef
+    if (Math.hypot(b.x - ai.px, b.z - ai.pz) < 0.03) {
+      ai.stuckT += dt;
+      if (ai.stuckT > 0.6) { pickPatrol(b); ai.stuckT = 0; }
+    } else ai.stuckT = 0;
+  }
+
+  // Hareket isteğini normalize edip yaz (sunucu hız sabitini uygular)
+  const len = Math.hypot(wx, wz);
+  if (len > 0.001) {
+    b.input.wx = (wx / len) * mag;
+    b.input.wz = (wz / len) * mag;
+  } else {
+    b.input.wx = 0; b.input.wz = 0;
+  }
+  b.input.sp = false;
+  ai.px = b.x; ai.pz = b.z;
+}
+
+// ---------------------------------------------------------------------
 // IŞIN (RAY) TESTLERİ — sunucu tarafı isabet kararı
 // ---------------------------------------------------------------------
 function rayAABB(ox, oy, oz, dx, dy, dz, minX, minY, minZ, maxX, maxY, maxZ) {
@@ -234,7 +377,8 @@ io.on('connection', (socket) => {
     room.players.set(socket.id, player);
     socket.join(room.id);
     socket.emit('init', { id: socket.id, room: room.id });
-    console.log(`[+] ${name} → ${room.id} (${room.players.size}/${MAX_PLAYERS})`);
+    syncBots(room);
+    console.log(`[+] ${name} → ${room.id} (${humanCount(room)} insan / ${room.players.size} toplam)`);
   });
 
   socket.on('in', (d) => {
@@ -264,8 +408,9 @@ io.on('connection', (socket) => {
     if (room && player) {
       room.players.delete(socket.id);
       io.to(room.id).emit('left', { id: socket.id });
-      console.log(`[-] ${player.name} ayrıldı (${room.players.size}/${MAX_PLAYERS})`);
-      if (room.players.size === 0) rooms.delete(room.id);
+      console.log(`[-] ${player.name} ayrıldı (${humanCount(room)} insan kaldı)`);
+      if (humanCount(room) === 0) rooms.delete(room.id);   // insansız oda kapanır
+      else syncBots(room);
     }
   });
 });
@@ -275,6 +420,13 @@ io.on('connection', (socket) => {
 // ---------------------------------------------------------------------
 setInterval(() => {
   for (const room of rooms.values()) {
+    if (humanCount(room) === 0) { rooms.delete(room.id); continue; }
+
+    // Bot zekası: girdi üretir, sonra herkesle aynı hareket kodundan geçer
+    for (const p of room.players.values()) {
+      if (p.isBot && !p.dead) botAI(p, room, TICK_DT);
+    }
+
     for (const p of room.players.values()) {
       // Respawn
       if (p.dead) {
