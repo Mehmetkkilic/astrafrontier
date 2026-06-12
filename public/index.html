@@ -112,6 +112,17 @@
     text-shadow: 0 1px 3px rgba(0,0,0,0.5);
   }
   #buyPrompt .hint { color: #6b8577; font-size: 12px; }
+  #buyPrompt .bpTitle {
+    text-align: center; font-size: 12px; letter-spacing: 2px;
+    color: #6dff8e; margin-bottom: 6px;
+  }
+  #buyPrompt .bp {
+    padding: 6px 10px; margin-top: 3px; border-radius: 5px;
+    background: rgba(109, 255, 142, 0.07);
+    cursor: pointer;
+  }
+  #buyPrompt .bp.owned { color: #6b8577; background: none; }
+  #buyPrompt .bp:active { background: rgba(109, 255, 142, 0.22); }
   #wpnBtn {
     right: calc(34px + env(safe-area-inset-right));
     bottom: calc(222px + env(safe-area-inset-bottom));
@@ -324,7 +335,12 @@
   <span id="magVal">30</span><span class="ammoSep"> / </span><span id="resVal">120</span>
   <div id="reloadMsg">RELOAD [R]</div>
 </div>
-<div id="buyPrompt">⛽ MERMİ AL — 100 ₵ <span class="hint">[E]</span></div>
+<div id="buyPrompt">
+  <div class="bpTitle">⛽ TEDARİK İSTASYONU</div>
+  <div class="bp" data-item="ammo">Mermi (tümü) — 100 ₵ <span class="hint">[E]</span></div>
+  <div class="bp" data-item="shotgun">Pompalı — 800 ₵ <span class="hint">[3]</span></div>
+  <div class="bp" data-item="dmr">DMR — 1200 ₵ <span class="hint">[4]</span></div>
+</div>
 <div id="fireBtn" class="mbtn">◉</div>
 <div id="adsBtn" class="mbtn">ADS</div>
 <div id="reloadBtn" class="mbtn">R</div>
@@ -356,7 +372,7 @@
   <input id="nameInp" placeholder="Takma adın" maxlength="14">
   <div class="keys">
     <kbd>Tıkla</kbd> başlat &nbsp;·&nbsp; <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> hareket &nbsp;·&nbsp; <kbd>Shift</kbd> koşu &nbsp;·&nbsp; <kbd>Tab</kbd> skor<br>
-    <kbd>Sol tık</kbd> ateş &nbsp;·&nbsp; <kbd>Sağ tık</kbd> nişan &nbsp;·&nbsp; <kbd>R</kbd> şarjör &nbsp;·&nbsp; <kbd>1</kbd> tüfek &nbsp;·&nbsp; <kbd>2</kbd> bıçak &nbsp;·&nbsp; <kbd>E</kbd> satın al<br>
+    <kbd>Sol tık</kbd> ateş &nbsp;·&nbsp; <kbd>Sağ tık</kbd> nişan &nbsp;·&nbsp; <kbd>R</kbd> şarjör &nbsp;·&nbsp; <kbd>1-4</kbd> silahlar &nbsp;·&nbsp; <kbd>Q</kbd> geçiş &nbsp;·&nbsp; <kbd>E</kbd> mermi al<br>
     <kbd>8</kbd> <kbd>9</kbd> <kbd>0</kbd> render scale &nbsp;·&nbsp; <kbd>Esc</kbd> çıkış
   </div>
 </div>
@@ -699,9 +715,50 @@
   knifeMesh.visible = false;
   weapon.add(knifeMesh);
 
+  // --- Pompalı viewmodel ---
+  const sgGeoms = [];
+  function sgBox(w, h, d, x, y, z, c) {
+    let g = new THREE.BoxGeometry(w, h, d);
+    g = bakeLighting(g, c, { aoHeight: 0 });
+    const m = new THREE.Matrix4(); m.makeTranslation(x, y, z); g.applyMatrix4(m);
+    sgGeoms.push(g);
+  }
+  sgBox(0.075, 0.095, 0.40,  0,     0,     0,     0x6b4a2f);   // gövde (ahşap)
+  sgBox(0.05,  0.05,  0.34,  0,     0.025, -0.45, 0x4a5258);   // namlu
+  sgBox(0.042, 0.042, 0.30,  0,    -0.03,  -0.42, 0x3d454c);   // fişek tüpü
+  sgBox(0.08,  0.06,  0.13,  0,    -0.055, -0.30, 0x8a6240);   // pompa kabzası
+  sgBox(0.065, 0.095, 0.18,  0,    -0.005,  0.28, 0x6b4a2f);   // dipçik
+  sgBox(0.012, 0.018, 0.012, 0,     0.06,  -0.60, 0xd8e2d8);   // gez (bead)
+  const sgMesh = new THREE.Mesh(mergeAll(sgGeoms),
+    new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
+  sgMesh.visible = false;
+  weapon.add(sgMesh);
+
+  // --- DMR viewmodel ---
+  const dmrGeoms = [];
+  function dmrBox(w, h, d, x, y, z, c) {
+    let g = new THREE.BoxGeometry(w, h, d);
+    g = bakeLighting(g, c, { aoHeight: 0 });
+    const m = new THREE.Matrix4(); m.makeTranslation(x, y, z); g.applyMatrix4(m);
+    dmrGeoms.push(g);
+  }
+  dmrBox(0.06,  0.095, 0.55,  0,     0,     0,     0x5a6b52);   // gövde (haki)
+  dmrBox(0.028, 0.028, 0.40,  0,     0.015, -0.62, 0x3d454c);   // uzun namlu
+  dmrBox(0.05,  0.12,  0.07,  0,    -0.105, -0.05, 0x3d454c);   // şarjör
+  dmrBox(0.05,  0.05,  0.18,  0,     0.105, -0.04, 0x2e353b);   // dürbün tüpü
+  dmrBox(0.04,  0.04,  0.012, 0,     0.105, -0.135, 0x101820);  // ön lens (koyu)
+  dmrBox(0.055, 0.085, 0.16,  0,     0,      0.33,  0x5a6b52);  // dipçik
+  const dmrMesh = new THREE.Mesh(mergeAll(dmrGeoms),
+    new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
+  dmrMesh.visible = false;
+  weapon.add(dmrMesh);
+
   const HIP = new THREE.Vector3(0.26, -0.24, -0.55);
   const ADS_POS = new THREE.Vector3(0, -0.115, -0.52);
   const KNIFE_HIP = new THREE.Vector3(0.30, -0.26, -0.42);
+  const SG_HIP = new THREE.Vector3(0.27, -0.25, -0.50);
+  const DMR_HIP = new THREE.Vector3(0.26, -0.23, -0.60);
+  const DMR_ADS = new THREE.Vector3(0, -0.105, -0.50);   // dürbün merkeze
   weapon.position.copy(HIP);
   camera.add(weapon);
 
@@ -746,26 +803,66 @@
   const tracers = new Float32Array(TR_N);   // slot başına kalan ömür
   let trNext = 0;
 
-  // --- Silah durumu ---
+  // --- Silah durumu (4 silah: tüfek/bıçak/pompalı/dmr) ---
+  const WEAPONS = {
+    rifle:   { name: 'TÜFEK',   wp: 1, mag: 30, res: 120, rpm: 0.088, reload: 1.6, recoil: 0.012, snd: [0.45, 1800] },
+    shotgun: { name: 'POMPALI', wp: 2, mag: 6,  res: 24,  rpm: 0.85,  reload: 2.2, recoil: 0.045, snd: [0.62, 650]  },
+    dmr:     { name: 'DMR',     wp: 3, mag: 10, res: 30,  rpm: 0.60,  reload: 2.0, recoil: 0.05,  snd: [0.5, 1100]  },
+    knife:   { name: 'BIÇAK',   wp: 0 }
+  };
+  const owned = { rifle: true, knife: true, shotgun: false, dmr: false };
+
   const gun = {
-    weapon: 'rifle',        // 'rifle' | 'knife'
+    weapon: 'rifle',
+    ammo: {
+      rifle:   { mag: 30, res: 120 },
+      shotgun: { mag: 6,  res: 24 },
+      dmr:     { mag: 10, res: 30 }
+    },
     mag: 30, magSize: 30, reserve: 120,
-    rpmInterval: 0.088,     // ~680 rpm
+    rpmInterval: 0.088,
     knifeInterval: 0.42,
     knifeAnimT: 0,
+    reloadTime: 1.6,
+    recoil: 0.012,
     cooldown: 0,
-    reloading: false, reloadTime: 1.6, reloadT: 0,
+    reloading: false, reloadT: 0,
     trigger: false, ads: false, flashTtl: 0
   };
 
+  const weaponMeshes = { rifle: rifleMesh, knife: knifeMesh, shotgun: sgMesh, dmr: dmrMesh };
+
   function setWeapon(w) {
-    if (gun.weapon === w) return;
+    if (gun.weapon === w || !owned[w]) return;
+    // Aktif silahın cephanesini deposuna yaz
+    if (gun.weapon !== 'knife') {
+      const st = gun.ammo[gun.weapon];
+      st.mag = gun.mag; st.res = gun.reserve;
+    }
     gun.weapon = w;
     gun.ads = false;
-    gun.reloading = false;   // bıçağa geçiş reload'u iptal eder
-    rifleMesh.visible = (w === 'rifle');
-    knifeMesh.visible = (w === 'knife');
+    gun.reloading = false;
+    gun.knifeAnimT = 0;
+    if (w !== 'knife') {
+      const def = WEAPONS[w], st = gun.ammo[w];
+      gun.mag = st.mag; gun.reserve = st.res;
+      gun.magSize = def.mag;
+      gun.rpmInterval = def.rpm;
+      gun.reloadTime = def.reload;
+      gun.recoil = def.recoil;
+    }
+    for (const k in weaponMeshes) weaponMeshes[k].visible = (k === w);
     updateAmmoHud();
+  }
+
+  // Varsayılan teçhizata dön (ölüm sonrası)
+  function resetLoadout() {
+    owned.shotgun = false; owned.dmr = false;
+    gun.ammo.rifle = { mag: 30, res: 120 };
+    gun.ammo.shotgun = { mag: 6, res: 24 };
+    gun.ammo.dmr = { mag: 10, res: 30 };
+    gun.weapon = 'knife';   // setWeapon'ın erken dönmemesi için
+    setWeapon('rifle');
   }
   let recoilPitch = 0;
   let bobT = 0;
@@ -778,7 +875,7 @@
   const resEl = document.getElementById('resVal');
   const reloadEl = document.getElementById('reloadMsg');
   function updateAmmoHud() {
-    document.getElementById('wpnName').textContent = gun.weapon === 'knife' ? 'BIÇAK' : 'TÜFEK';
+    document.getElementById('wpnName').textContent = WEAPONS[gun.weapon].name;
     if (gun.weapon === 'knife') {
       magEl.textContent = '—';
       resEl.textContent = '';
@@ -834,12 +931,13 @@
       return;
     }
 
-    // --- TÜFEK ---
+    // --- ATEŞLİ SİLAHLAR ---
+    const def = WEAPONS[gun.weapon];
     gun.mag--;
     gun.cooldown = gun.rpmInterval;
 
-    // Geri tepme: dikeyde birikir + hafif rastgele yatay sapma
-    recoilPitch += 0.010 + Math.random() * 0.005;
+    // Geri tepme: silaha özel + hafif rastgele yatay sapma
+    recoilPitch += def.recoil + Math.random() * def.recoil * 0.4;
     yaw += (Math.random() - 0.5) * 0.0025;
 
     // Namlu flaşı
@@ -849,41 +947,49 @@
     flash.scale.set(fs, fs, 1);
     gun.flashTtl = 0.045;
 
-    // Raycast: ekran merkezi → harita + canlı botlar
+    // Raycast: ekran merkezi → harita + canlı rakipler
     raycaster.setFromCamera(NDC_CENTER, camera);
     shootTargets.length = 1;   // [0] = mapMesh
     for (const r of remotes.values()) if (!r.dead) shootTargets.push(r.mesh);
-    const hits = raycaster.intersectObjects(shootTargets, false);
-    let end;
-    if (hits.length) {
-      const h = hits[0];
-      end = h.point.clone();
-      if (h.object.userData.remote) {
-        // İsabet/hasar kararı SUNUCUDA — burada sadece görsel uç nokta
-      } else if (h.face) {
-        end.addScaledVector(h.face.normal, 0.02);
-      }
-    } else {
-      end = raycaster.ray.at(150, new THREE.Vector3());
-    }
-
-    // Mermi izi
     muzzle.getWorldPosition(_muzzleWorld);
-    const s = trNext * 6;
-    trPos[s] = _muzzleWorld.x; trPos[s + 1] = _muzzleWorld.y; trPos[s + 2] = _muzzleWorld.z;
-    trPos[s + 3] = end.x; trPos[s + 4] = end.y; trPos[s + 5] = end.z;
-    tracers[trNext] = 0.05;
-    trNext = (trNext + 1) % TR_N;
+
+    const pelletCount = gun.weapon === 'shotgun' ? 5 : 1;   // görsel saçılım
+    const baseDir = raycaster.ray.direction.clone();
+    const baseOrigin = raycaster.ray.origin.clone();
+
+    for (let pi = 0; pi < pelletCount; pi++) {
+      if (pi > 0) {
+        const d2 = baseDir.clone();
+        d2.x += (Math.random() - 0.5) * 0.09;
+        d2.y += (Math.random() - 0.5) * 0.09;
+        d2.z += (Math.random() - 0.5) * 0.09;
+        raycaster.set(baseOrigin, d2.normalize());
+      }
+      const hits = raycaster.intersectObjects(shootTargets, false);
+      let end;
+      if (hits.length) {
+        const h = hits[0];
+        end = h.point.clone();
+        if (!h.object.userData.remote && h.face) {
+          end.addScaledVector(h.face.normal, 0.02);
+        }
+        // Çarpma efekti
+        impacts[impNext] = { pos: end, ttl: 0.22, rx: Math.random() * 3.14, ry: Math.random() * 3.14 };
+        impNext = (impNext + 1) % IMP_N;
+      } else {
+        end = raycaster.ray.at(gun.weapon === 'shotgun' ? 32 : 150, new THREE.Vector3());
+      }
+      // Mermi izi
+      const s = trNext * 6;
+      trPos[s] = _muzzleWorld.x; trPos[s + 1] = _muzzleWorld.y; trPos[s + 2] = _muzzleWorld.z;
+      trPos[s + 3] = end.x; trPos[s + 4] = end.y; trPos[s + 5] = end.z;
+      tracers[trNext] = 0.05;
+      trNext = (trNext + 1) % TR_N;
+    }
     trGeom.attributes.position.needsUpdate = true;
 
-    // Çarpma efekti
-    if (hits.length) {
-      impacts[impNext] = { pos: end, ttl: 0.22, rx: Math.random() * 3.14, ry: Math.random() * 3.14 };
-      impNext = (impNext + 1) % IMP_N;
-    }
-
-    if (socket && socket.connected) socket.emit('fire', { yaw: yaw, pitch: pitch, wp: 1 });
-    shotSound();
+    if (socket && socket.connected) socket.emit('fire', { yaw: yaw, pitch: pitch, wp: def.wp });
+    shotSound(def.snd[0], def.snd[1]);
     updateAmmoHud();
   }
 
@@ -927,11 +1033,15 @@
         knifeMesh.position.z = 0;
         knifeMesh.rotation.x = 0.15;
       }
+    } else if (gun.weapon === 'shotgun') {
+      targetPos = SG_HIP;   // pompalıda ADS yok
+    } else if (gun.weapon === 'dmr') {
+      targetPos = gun.ads ? DMR_ADS : DMR_HIP;
     } else {
       targetPos = gun.ads ? ADS_POS : HIP;
     }
     weapon.position.lerp(targetPos, Math.min(1, dt * 14));
-    const fovT = (gun.ads && gun.weapon === 'rifle') ? 46 : 75;
+    const fovT = gun.ads ? (gun.weapon === 'dmr' ? 36 : 46) : 75;
     if (Math.abs(camera.fov - fovT) > 0.1) {
       camera.fov += (fovT - camera.fov) * Math.min(1, dt * 14);
       camera.updateProjectionMatrix();
@@ -1073,15 +1183,27 @@
     }
     sbRowsEl.innerHTML = html;
   }
-  function addKillFeed(a, v, hs, w) {
+  function addKillFeed(a, v, hs, w, bounty) {
     const div = document.createElement('div');
     div.className = 'kf';
-    const icon = w === 'knife' ? '🔪' : (hs ? '☠' : '⟶');
-    div.innerHTML = `<span class="a">${a}</span> ${icon} <span class="v">${v}</span>`;
+    const icon = w === 'knife' ? '🔪' : w === 'shotgun' ? '💥' : w === 'dmr' ? '🎯' : (hs ? '☠' : '⟶');
+    const bTxt = bounty > 0 ? ` <span style="color:#facc15">+${bounty}₵💰</span>` : '';
+    div.innerHTML = `<span class="a">${a}</span> ${icon} <span class="v">${v}</span>${bTxt}`;
     kfEl.appendChild(div);
     while (kfEl.children.length > 4) kfEl.removeChild(kfEl.firstChild);
     setTimeout(() => { div.style.opacity = 0; }, 3200);
     setTimeout(() => { if (div.parentNode) div.parentNode.removeChild(div); }, 3800);
+  }
+  function addAnnouncement(text) {
+    const div = document.createElement('div');
+    div.className = 'kf';
+    div.style.color = '#facc15';
+    div.style.borderLeft = '2px solid #facc15';
+    div.textContent = text;
+    kfEl.appendChild(div);
+    while (kfEl.children.length > 4) kfEl.removeChild(kfEl.firstChild);
+    setTimeout(() => { div.style.opacity = 0; }, 4500);
+    setTimeout(() => { if (div.parentNode) div.parentNode.removeChild(div); }, 5100);
   }
   document.getElementById('score').addEventListener('click', () => {
     if (!playing) return;
@@ -1096,15 +1218,41 @@
     myMoney = m;
     moneyEl.textContent = '₵ ' + m;
   }
-  function tryBuy() {
+  function tryBuy(item) {
     if (!nearStation || selfDead || matchFrozen) return;
+    if (item === 'shotgun' && owned.shotgun) return;
+    if (item === 'dmr' && owned.dmr) return;
     if (socket && socket.connected) {
-      socket.emit('buy', { item: 'ammo' });
+      socket.emit('buy', { item: item });
     } else {
-      gun.reserve = 120;   // offline mod: bedava dolum
-      updateAmmoHud();
+      // Offline mod: bedava
+      if (item === 'ammo') refillAmmo();
+      if (item === 'shotgun') grantWeapon('shotgun');
+      if (item === 'dmr') grantWeapon('dmr');
       beepBuy();
     }
+  }
+  function refillAmmo() {
+    for (const w of ['rifle', 'shotgun', 'dmr']) gun.ammo[w].res = WEAPONS[w].res;
+    if (gun.weapon !== 'knife') gun.reserve = WEAPONS[gun.weapon].res;
+    updateAmmoHud();
+  }
+  function grantWeapon(w) {
+    owned[w] = true;
+    gun.ammo[w] = { mag: WEAPONS[w].mag, res: WEAPONS[w].res };
+    setWeapon(w);   // satın alınca otomatik eline gelir
+    refreshShopRows();
+  }
+  function refreshShopRows() {
+    for (const row of buyEl.querySelectorAll('.bp')) {
+      const item = row.dataset.item;
+      if (item === 'shotgun') row.classList.toggle('owned', owned.shotgun);
+      if (item === 'dmr') row.classList.toggle('owned', owned.dmr);
+    }
+  }
+  for (const row of document.querySelectorAll('#buyPrompt .bp')) {
+    row.addEventListener('click', () => tryBuy(row.dataset.item));
+    row.addEventListener('touchstart', (e) => { e.preventDefault(); tryBuy(row.dataset.item); }, { passive: false });
   }
   function beepBuy() {
     shotSound(0.001, 100);   // AudioContext'i uyandır
@@ -1120,8 +1268,7 @@
       });
     } catch (err) {}
   }
-  buyEl.addEventListener('click', tryBuy);
-  buyEl.addEventListener('touchstart', (e) => { e.preventDefault(); tryBuy(); }, { passive: false });
+  // (satın alma artık satır bazlı — yukarıdaki .bp dinleyicileri)
 
   // İstasyon yakınlık kontrolü (her karede ucuz: 2 nokta)
   function updateStationProximity() {
@@ -1134,6 +1281,7 @@
     if (near !== nearStation) {
       nearStation = near;
       buyEl.style.display = near ? 'block' : 'none';
+      if (near) refreshShopRows();
     }
   }
 
@@ -1186,14 +1334,28 @@
     socket.on('init', (d) => { myId = d.id; });
     socket.on('snap', onSnap);
     socket.on('shot', (s) => {
-      spawnTracer(s.ox, s.oy, s.oz, s.ex, s.ey, s.ez);
-      shotSound(0.14, 900);
+      if (s.wt === 2) {
+        // Pompalı: 5 saçılmış görsel iz + boğuk patlama
+        for (let i = 0; i < 5; i++) {
+          spawnTracer(s.ox, s.oy, s.oz,
+            s.ex + (Math.random() - 0.5) * 2.2,
+            s.ey + (Math.random() - 0.5) * 1.6,
+            s.ez + (Math.random() - 0.5) * 2.2);
+        }
+        shotSound(0.22, 500);
+      } else {
+        spawnTracer(s.ox, s.oy, s.oz, s.ex, s.ey, s.ez);
+        shotSound(s.wt === 3 ? 0.18 : 0.14, s.wt === 3 ? 800 : 900);
+      }
     });
     socket.on('hitConfirm', (d) => showHitmarker(!!(d && d.kill)));
-    socket.on('kill', (d) => { if (d) addKillFeed(d.a, d.v, d.hs, d.w); });
+    socket.on('kill', (d) => { if (d) addKillFeed(d.a, d.v, d.hs, d.w, d.b); });
+    socket.on('ann', (d) => { if (d && d.t) addAnnouncement(d.t); });
     socket.on('bought', (d) => {
       if (!d) return;
-      if (d.item === 'ammo') { gun.reserve = 120; updateAmmoHud(); }
+      if (d.item === 'ammo') refillAmmo();
+      if (d.item === 'shotgun') grantWeapon('shotgun');
+      if (d.item === 'dmr') grantWeapon('dmr');
       updateMoney(d.m);
       beepBuy();
     });
@@ -1264,6 +1426,7 @@
           camera.rotation.z = 0;
           camera.position.y = 1.7;
           weapon.visible = true;
+          resetLoadout();                  // satın alınanlar düştü, default teçhizat
           dsEl.textContent = '';
           deathMsgT = 0; dmEl.style.opacity = 0;
           vigOp = 0; vigEl.style.opacity = 0;
@@ -1490,8 +1653,10 @@
   const wpnBtn = document.getElementById('wpnBtn');
   wpnBtn.addEventListener('touchstart', (e) => {
     e.preventDefault();
-    setWeapon(gun.weapon === 'rifle' ? 'knife' : 'rifle');
-    wpnBtn.textContent = gun.weapon === 'rifle' ? '🔪' : '🔫';   // ikon: GEÇİLECEK silah
+    const order = ['rifle', 'shotgun', 'dmr', 'knife'].filter(w => owned[w]);
+    const i = order.indexOf(gun.weapon);
+    setWeapon(order[(i + 1) % order.length]);
+    wpnBtn.textContent = gun.weapon === 'knife' ? '🔪' : gun.weapon === 'shotgun' ? '💥' : gun.weapon === 'dmr' ? '🎯' : '🔫';
   }, { passive: false });
 
   function showHud() {
@@ -1521,7 +1686,7 @@
   canvas.addEventListener('mousedown', (e) => {
     if (!locked) return;
     if (e.button === 0) gun.trigger = true;
-    if (e.button === 2 && gun.weapon === 'rifle') gun.ads = true;
+    if (e.button === 2 && (gun.weapon === 'rifle' || gun.weapon === 'dmr')) gun.ads = true;
   });
   window.addEventListener('mouseup', (e) => {
     if (e.button === 0) gun.trigger = false;
@@ -1561,9 +1726,15 @@
     if (!playing) return;
     if (code === 'Digit1') setWeapon('rifle');
     if (code === 'Digit2') setWeapon('knife');
-    if (code === 'KeyQ') setWeapon(gun.weapon === 'rifle' ? 'knife' : 'rifle');
+    if (code === 'Digit3') { if (owned.shotgun) setWeapon('shotgun'); else if (nearStation) tryBuy('shotgun'); }
+    if (code === 'Digit4') { if (owned.dmr) setWeapon('dmr'); else if (nearStation) tryBuy('dmr'); }
+    if (code === 'KeyQ') {
+      const order = ['rifle', 'shotgun', 'dmr', 'knife'].filter(w => owned[w]);
+      const i = order.indexOf(gun.weapon);
+      setWeapon(order[(i + 1) % order.length]);
+    }
     if (code === 'KeyR') startReload();
-    if (code === 'KeyE') tryBuy();
+    if (code === 'KeyE') tryBuy('ammo');
   }
   function onKeyUp(e) {
     const code = normCode(e);
