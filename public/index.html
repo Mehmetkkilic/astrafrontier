@@ -2,15 +2,25 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>ASTRA FRONTIER — Online</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a0a; font-family: 'Segoe UI', system-ui, sans-serif; }
-  #game { display: block; width: 100%; height: 100%; touch-action: none; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden; overscroll-behavior: none;
+    position: fixed; inset: 0;
+    background: #0a0a0a;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+  }
+  #game {
+    position: fixed; inset: 0;
+    display: block; width: 100%; height: 100%;
+    touch-action: none;
+  }
 
   /* ---- Sanal joystick (mobil) ---- */
-  #joyBase, #joyKnob {
+  #joyBase, #joyKnob, #joyGhost {
     position: fixed; border-radius: 50%;
     pointer-events: none; display: none;
   }
@@ -24,6 +34,20 @@
     width: 48px; height: 48px;
     margin: -24px 0 0 -24px;
     background: rgba(160, 255, 200, 0.55);
+  }
+  /* Hayalet joystick: başparmağın evi — dokununca gerçek joystick oraya gelir */
+  #joyGhost {
+    width: 120px; height: 120px;
+    left: calc(95px + env(safe-area-inset-left));
+    bottom: calc(70px + env(safe-area-inset-bottom));
+    border: 2px dashed rgba(160, 255, 200, 0.22);
+    background: rgba(20, 30, 25, 0.12);
+  }
+  #joyGhost::after {
+    content: ''; position: absolute;
+    left: 50%; top: 50%; width: 40px; height: 40px;
+    margin: -20px 0 0 -20px; border-radius: 50%;
+    background: rgba(160, 255, 200, 0.15);
   }
 
   /* ---- Dev istatistik paneli ---- */
@@ -84,9 +108,23 @@
     user-select: none; -webkit-user-select: none;
     touch-action: none;
   }
-  #fireBtn { right: 26px; bottom: 86px; width: 86px; height: 86px; font-size: 30px; }
-  #adsBtn { right: 130px; bottom: 96px; width: 56px; height: 56px; font-size: 13px; }
-  #reloadBtn { right: 52px; bottom: 190px; width: 48px; height: 48px; font-size: 16px; }
+  #fireBtn {
+    right: calc(30px + env(safe-area-inset-right));
+    bottom: calc(105px + env(safe-area-inset-bottom));
+    width: 96px; height: 96px; font-size: 34px;
+    background: rgba(220, 90, 70, 0.22);
+    border-color: rgba(255, 150, 130, 0.45);
+  }
+  #adsBtn {
+    right: calc(148px + env(safe-area-inset-right));
+    bottom: calc(82px + env(safe-area-inset-bottom));
+    width: 62px; height: 62px; font-size: 14px;
+  }
+  #reloadBtn {
+    right: calc(146px + env(safe-area-inset-right));
+    bottom: calc(168px + env(safe-area-inset-bottom));
+    width: 54px; height: 54px; font-size: 17px;
+  }
 
   /* ---- Can HUD ---- */
   #health {
@@ -204,6 +242,7 @@
 <div id="crosshair"></div>
 <div id="joyBase"></div>
 <div id="joyKnob"></div>
+<div id="joyGhost"></div>
 
 <div id="ammo">
   <span id="magVal">30</span><span class="ammoSep"> / </span><span id="resVal">120</span>
@@ -263,15 +302,22 @@
   camera.position.set(0, 1.7, 38);
 
   function resize() {
-    const w = Math.floor(window.innerWidth * renderScale);
-    const h = Math.floor(window.innerHeight * renderScale);
+    // visualViewport iOS'ta gerçek görünür alanı verir (araç çubuğu/çentik dahil)
+    const vw = window.visualViewport ? window.visualViewport.width : window.innerWidth;
+    const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    // DPR hesaba katılır (2x üst sınır): telefonlarda keskin görüntü,
+    // performans için tam 3x native'e çıkılmaz
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.floor(vw * renderScale * dpr);
+    const h = Math.floor(vh * renderScale * dpr);
     renderer.setSize(w, h, false);
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    camera.aspect = window.innerWidth / window.innerHeight;
+    canvas.style.width = vw + 'px';
+    canvas.style.height = vh + 'px';
+    camera.aspect = vw / vh;
     camera.updateProjectionMatrix();
   }
   window.addEventListener('resize', resize);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 
   // =====================================================================
   // 2. BAKED VERTEX LIGHTING
@@ -1009,6 +1055,7 @@
   const crosshair = document.getElementById('crosshair');
   const joyBaseEl = document.getElementById('joyBase');
   const joyKnobEl = document.getElementById('joyKnob');
+  const joyGhostEl = document.getElementById('joyGhost');
 
   const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
   let locked = false;       // pointer lock durumu (sadece masaüstü)
@@ -1053,6 +1100,7 @@
         joyBaseEl.style.left = t.clientX + 'px'; joyBaseEl.style.top = t.clientY + 'px';
         joyKnobEl.style.left = t.clientX + 'px'; joyKnobEl.style.top = t.clientY + 'px';
         joyBaseEl.style.display = 'block'; joyKnobEl.style.display = 'block';
+        joyGhostEl.style.display = 'none';
       } else if (lookId === null) {
         lookId = t.identifier; lookX = t.clientX; lookY = t.clientY;
       }
@@ -1085,6 +1133,7 @@
       if (t.identifier === joy.id) {
         joy.active = false; joy.id = null; joy.dx = 0; joy.dy = 0;
         joyBaseEl.style.display = 'none'; joyKnobEl.style.display = 'none';
+        if (playing) joyGhostEl.style.display = 'block';
       }
       if (t.identifier === lookId) lookId = null;
     }
@@ -1113,6 +1162,8 @@
     document.getElementById('score').style.display = 'block';
     document.getElementById('minimap').style.display = 'block';
     if (isTouch) {
+      document.getElementById('stats').style.display = 'none';   // mobilde dev paneli ekranı kaplıyor
+      joyGhostEl.style.display = 'block';
       fireBtn.style.display = 'flex';
       adsBtn.style.display = 'flex';
       reloadBtn.style.display = 'flex';
