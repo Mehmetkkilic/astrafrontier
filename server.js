@@ -102,8 +102,8 @@ const FIRE_MIN_MS = 80;      // ~700 rpm üst sınırı (hız hilesi reddi)
 const BODY_DMG = 34;
 const HEAD_DMG = 100;
 const RESPAWN_S = 3;
-const REGEN_DELAY_S = 4;
-const REGEN_RATE = 16;
+const REGEN_DELAY_S = 5;     // v0.5: yenilenme gecikmesi arttı (zorluk)
+const REGEN_RATE = 12;       // v0.5: yenilenme yavaşladı
 const MAX_PLAYERS = 10;
 const KILL_TARGET = parseInt(process.env.KILL_TARGET || '20', 10);   // maçı kazanma hedefi
 const MATCH_END_S = 10;                                              // sonuç ekranı süresi
@@ -115,9 +115,20 @@ const HS_BONUS = 100;        // headshot bonusu
 const KNIFE_BONUS = 200;     // bıçak kill bonusu
 const WIN_REWARD = 1000;     // maç galibi
 const LOSE_REWARD = 250;     // diğer herkes
-const AMMO_COST = 100;
+const DEATH_PENALTY = 200;   // her ölüm -200₵ (taban 0)
+const BOUNTY_PER = 200;      // kill serisi × 200₵ = başındaki ödül
 const STATIONS = [[-5.5, -11], [30, 18]];   // tedarik istasyonları (istemciyle aynı)
 const BUY_RANGE = 3.5;
+const PRICES = { ammo: 100, shotgun: 800, dmr: 1200 };
+
+// --- SİLAHLAR (wp kodu: 0 bıçak, 1 tüfek, 2 pompalı, 3 dmr) ---
+const FIRE_MIN = { 0: 400, 1: 80, 2: 800, 3: 600 };
+const SG_PELLETS = 8;
+const SG_SPREAD = 0.05;
+const SG_DMG = 12;          // pellet başına (yakında ~96)
+const SG_RANGE = 32;
+const DMR_BODY = 65;
+const DMR_HEAD = 130;       // kafadan tek atış
 
 const SPAWNS = [
   [0, 38], [-35, -28], [38, -24], [-30, 16], [24, 30], [18, -32], [-22, 2]
@@ -151,6 +162,8 @@ function makePlayer(id, name) {
     hp: 100, dead: false, respawnT: 0, sinceHit: 99,
     kills: 0, deaths: 0,
     money: START_MONEY,
+    streak: 0,
+    owned: { sg: false, dmr: false },
     lastFire: 0,
     input: { wx: 0, wz: 0, sp: false, yaw: 0 }
   };
@@ -160,7 +173,7 @@ function makePlayer(id, name) {
 // BOTLAR — oda 4 kişiye tamamlanır, insan girdikçe bot çıkar
 // ---------------------------------------------------------------------
 const BOT_NAMES = ['Kartal', 'Şahin', 'Atmaca', 'Doğan', 'Akbaba', 'Pars', 'Çakır', 'Bora'];
-const BOT_FILL = 4;
+const BOT_FILL = 5;   // v0.5: oda 5'e tamamlanır (zorluk)
 let botSeq = 0;
 
 function makeBot() {
@@ -168,10 +181,11 @@ function makeBot() {
   b.isBot = true;
   b.ai = {
     tx: 0, tz: 0,                 // devriye hedefi
-    burstCd: 2 + Math.random() * 2, burstLeft: 0, shotT: 0,
+    burstCd: 1.5 + Math.random() * 1.5, burstLeft: 0, shotT: 0,
     los: false, losT: 0,
     strafeT: Math.random() * 6,
-    stuckT: 0, px: b.x, pz: b.z
+    stuckT: 0, px: b.x, pz: b.z,
+    huntX: 0, huntZ: 0, huntT: 0   // vurulunca saldırgana yönelme
   };
   pickPatrol(b);
   return b;
@@ -219,13 +233,13 @@ function losClear(ax, az, bx, bz) {
 }
 
 function botFire(room, b, target, dist) {
-  // Göğse nişan + mesafeyle artan sapma → isabet oranı doğal düşer
+  // Göğse nişan + mesafeyle artan sapma (v0.5: nişan keskinleşti)
   const dx = target.x - b.x, dz = target.z - b.z;
-  const spread = 0.02 + dist * 0.0012;
+  const spread = 0.014 + dist * 0.0009;
   b.yaw = Math.atan2(-dx, -dz) + (Math.random() - 0.5) * spread * 2;
   const horiz = Math.max(0.5, Math.hypot(dx, dz));
   const pitch = Math.atan2(1.25 - 1.7, horiz) + (Math.random() - 0.5) * spread * 2;
-  serverFire(room, b, pitch);
+  serverFire(room, b, pitch, 1);
 }
 
 function botAI(b, room, dt) {
@@ -262,23 +276,29 @@ function botAI(b, room, dt) {
 
     if (ai.burstLeft > 0) {
       ai.shotT -= dt;
-      if (ai.shotT <= 0) { botFire(room, b, best, bd); ai.burstLeft--; ai.shotT = 0.15; }
+      if (ai.shotT <= 0) { botFire(room, b, best, bd); ai.burstLeft--; ai.shotT = 0.14; }
     } else {
       ai.burstCd -= dt;
       if (ai.burstCd <= 0) {
-        ai.burstLeft = 3; ai.shotT = 0;
-        ai.burstCd = 1.6 + Math.random() * 1.6;
+        ai.burstLeft = 4; ai.shotT = 0;             // v0.5: 4'lü burst, daha sık
+        ai.burstCd = 1.1 + Math.random() * 1.1;
       }
     }
   } else {
-    // DEVRİYE
-    const dxt = ai.tx - b.x, dzt = ai.tz - b.z;
+    // DEVRİYE — vurulduysa saldırganın son konumuna AV moduyla yönelir
+    let tx = ai.tx, tz = ai.tz;
+    if (ai.huntT > 0) {
+      ai.huntT -= dt;
+      tx = ai.huntX; tz = ai.huntZ;
+      if (Math.hypot(tx - b.x, tz - b.z) < 2.5) ai.huntT = 0;   // vardı, çevreye bak
+    }
+    const dxt = tx - b.x, dzt = tz - b.z;
     const dtg = Math.hypot(dxt, dzt);
-    if (dtg < 2) pickPatrol(b);
+    if (dtg < 2 && ai.huntT <= 0) pickPatrol(b);
     else {
       wx = dxt / dtg; wz = dzt / dtg;
       b.input.yaw = Math.atan2(-dxt, -dzt);
-      mag = 0.35;   // ~2.4 m/s
+      mag = ai.huntT > 0 ? 0.5 : 0.35;   // av modunda hızlı koşar
     }
     // Takılma tespiti: pozisyon değişmiyorsa yeni hedef
     if (Math.hypot(b.x - ai.px, b.z - ai.pz) < 0.03) {
@@ -328,14 +348,39 @@ function applyDamage(room, attacker, victim, dmg, hs, tag) {
   io.to(victim.id).emit('dmg', { hp: Math.max(0, victim.hp) });
   const kill = victim.hp <= 0;
   io.to(attacker.id).emit('hitConfirm', { kill });
+
+  // Bot vurulunca av moduna geçer: saldırganın son konumuna yönelir (zorluk)
+  if (!kill && victim.isBot) {
+    victim.ai.huntX = attacker.x;
+    victim.ai.huntZ = attacker.z;
+    victim.ai.huntT = 4;
+  }
+
   if (kill) {
     victim.dead = true;
     victim.respawnT = RESPAWN_S;
     victim.deaths++;
     attacker.kills++;
-    attacker.money += KILL_REWARD + (hs ? HS_BONUS : 0) + (tag === 'knife' ? KNIFE_BONUS : 0);
+
+    // --- Bounty + ödüller ---
+    const bounty = victim.streak * BOUNTY_PER;          // seriyi kesen ödülü alır
+    attacker.money += KILL_REWARD + (hs ? HS_BONUS : 0) +
+                      (tag === 'knife' ? KNIFE_BONUS : 0) + bounty;
+    victim.money = Math.max(0, victim.money - DEATH_PENALTY);   // ölüm cezası -200₵
+    attacker.streak++;
+    victim.streak = 0;
+    victim.owned = { sg: false, dmr: false };           // satın alınan silahlar düşer
+
     io.to(victim.id).emit('die', { by: attacker.name });
-    io.to(room.id).emit('kill', { a: attacker.name, v: victim.name, hs: hs, w: tag });
+    io.to(room.id).emit('kill', { a: attacker.name, v: victim.name, hs: hs, w: tag, b: bounty });
+
+    // Seri duyurusu: başındaki ödül büyüdükçe oda haberdar olur
+    if (attacker.streak === 3 || attacker.streak === 5 || attacker.streak >= 7) {
+      io.to(room.id).emit('ann', {
+        t: `💰 ${attacker.name} ${attacker.streak} kill serisinde — başında ${attacker.streak * BOUNTY_PER}₵ ödül!`
+      });
+    }
+
     if (attacker.kills >= KILL_TARGET && room.phase === 'play') {
       room.phase = 'end';
       room.endT = MATCH_END_S;
@@ -368,33 +413,23 @@ function serverKnife(room, p) {
     }
   }
   if (victim && losClear(p.x, p.z, victim.x, victim.z)) {
-    const vfx = -Math.sin(victim.yaw), vfz = -Math.cos(victim.yaw);
-    const behind = ((victim.x - p.x) * vfx + (victim.z - p.z) * vfz) > 0;   // sırtı dönük
-    applyDamage(room, p, victim, behind ? 100 : 55, false, 'knife');
+    applyDamage(room, p, victim, 100, false, 'knife');   // bıçak: her zaman tek vuruş
   }
 }
 
-function serverFire(room, p, pitch) {
-  if (room.phase !== 'play') return;   // maç arası ateş yok
-  const now = Date.now();
-  if (now - p.lastFire < FIRE_MIN_MS) return;   // hız hilesi reddi
-  p.lastFire = now;
-
-  // Bakış yönü (istemci kamera matematiğiyle aynı: YXZ)
+// Tek ışın izleme: en yakın duvar/oyuncu (tüfek, DMR ve pelletler bunu kullanır)
+function traceRay(room, p, yaw, pitch, maxRange) {
   const cp = Math.cos(pitch), spt = Math.sin(pitch);
-  const dx = -Math.sin(p.yaw) * cp;
+  const dx = -Math.sin(yaw) * cp;
   const dy = spt;
-  const dz = -Math.cos(p.yaw) * cp;
+  const dz = -Math.cos(yaw) * cp;
   const ox = p.x, oy = 1.7, oz = p.z;
 
-  // En yakın duvar mesafesi
-  let wallT = 300;
+  let wallT = maxRange;
   for (const c of colliders) {
     const t = rayAABB(ox, oy, oz, dx, dy, dz, c.minX, 0, c.minZ, c.maxX, c.maxY, c.maxZ);
     if (t >= 0 && t < wallT) wallT = t;
   }
-
-  // En yakın oyuncu isabeti (duvardan önce olmalı)
   let victim = null, victimT = wallT;
   for (const q of room.players.values()) {
     if (q === p || q.dead) continue;
@@ -402,20 +437,62 @@ function serverFire(room, p, pitch) {
       q.x - 0.4, 0, q.z - 0.4, q.x + 0.4, 1.8, q.z + 0.4);
     if (t >= 0 && t < victimT) { victimT = t; victim = q; }
   }
-
-  const endT = victim ? victimT : Math.min(wallT, 150);
-  const shotEvt = {
-    id: p.id,
-    ox, oy: oy - 0.15, oz,
-    ex: ox + dx * endT, ey: oy + dy * endT, ez: oz + dz * endT
+  const endT = victim ? victimT : wallT;
+  return {
+    victim, hitY: oy + dy * victimT,
+    ex: ox + dx * endT, ey: oy + dy * endT, ez: oz + dz * endT,
+    ox, oy, oz
   };
-  // Atışı atan hariç odadaki herkese görsel iz gönder
-  io.to(room.id).except(p.id).emit('shot', shotEvt);
+}
 
-  if (victim) {
-    const hitY = oy + dy * victimT;
-    const hs = hitY > 1.35;
-    applyDamage(room, p, victim, hs ? HEAD_DMG : BODY_DMG, hs, 'rifle');
+function serverFire(room, p, pitch, wp) {
+  if (room.phase !== 'play') return;
+  // Sahiplik doğrulaması: satın alınmamış silahla atış reddedilir
+  if (wp === 2 && !p.owned.sg) return;
+  if (wp === 3 && !p.owned.dmr) return;
+  const now = Date.now();
+  if (now - p.lastFire < (FIRE_MIN[wp] || 80)) return;
+  p.lastFire = now;
+
+  if (wp === 2) {
+    // --- POMPALI: 8 pellet, koni saçılım, hasarlar kurban başına toplanır ---
+    const dmgBy = new Map();
+    let center = null;
+    for (let i = 0; i < SG_PELLETS; i++) {
+      const sy = p.yaw + (Math.random() - 0.5) * SG_SPREAD * 2;
+      const sp = pitch + (Math.random() - 0.5) * SG_SPREAD * 2;
+      const r = traceRay(room, p, sy, sp, SG_RANGE);
+      if (!center) center = r;
+      if (r.victim) {
+        const e = dmgBy.get(r.victim) || { dmg: 0, hs: false };
+        e.dmg += SG_DMG;
+        if (r.hitY > 1.35) e.hs = true;
+        dmgBy.set(r.victim, e);
+      }
+    }
+    io.to(room.id).except(p.id).emit('shot', {
+      id: p.id, wt: 2,
+      ox: center.ox, oy: center.oy - 0.15, oz: center.oz,
+      ex: center.ex, ey: center.ey, ez: center.ez
+    });
+    for (const [victim, e] of dmgBy) {
+      applyDamage(room, p, victim, e.dmg, e.hs, 'shotgun');
+      if (victim.dead) continue;
+    }
+    return;
+  }
+
+  // --- TÜFEK / DMR: tek hassas ışın ---
+  const r = traceRay(room, p, p.yaw, pitch, 300);
+  io.to(room.id).except(p.id).emit('shot', {
+    id: p.id, wt: wp,
+    ox: r.ox, oy: r.oy - 0.15, oz: r.oz,
+    ex: r.ex, ey: r.ey, ez: r.ez
+  });
+  if (r.victim) {
+    const hs = r.hitY > 1.35;
+    if (wp === 3) applyDamage(room, p, r.victim, hs ? DMR_HEAD : DMR_BODY, hs, 'dmr');
+    else applyDamage(room, p, r.victim, hs ? HEAD_DMG : BODY_DMG, hs, 'rifle');
   }
 }
 
@@ -462,21 +539,27 @@ io.on('connection', (socket) => {
     let pitch = Number(d.pitch);
     if (!isFinite(pitch)) return;
     pitch = Math.max(-1.52, Math.min(1.52, pitch));
-    serverFire(room, player, pitch);
+    const wp = (d.wp === 2 || d.wp === 3) ? d.wp : 1;
+    serverFire(room, player, pitch, wp);
   });
 
   socket.on('buy', (d) => {
     if (!player || player.dead || !room || room.phase !== 'play' || !d) return;
-    if (d.item !== 'ammo') return;
+    const item = d.item;
+    if (!PRICES[item]) return;
     // İstasyon yakınlığı SUNUCUDA doğrulanır
     let near = false;
     for (const st of STATIONS) {
       if (Math.hypot(player.x - st[0], player.z - st[1]) < BUY_RANGE) { near = true; break; }
     }
     if (!near) return;
-    if (player.money >= AMMO_COST) {
-      player.money -= AMMO_COST;
-      socket.emit('bought', { item: 'ammo', m: player.money });
+    if (item === 'shotgun' && player.owned.sg) return;   // zaten sahip
+    if (item === 'dmr' && player.owned.dmr) return;
+    if (player.money >= PRICES[item]) {
+      player.money -= PRICES[item];
+      if (item === 'shotgun') player.owned.sg = true;
+      if (item === 'dmr') player.owned.dmr = true;
+      socket.emit('bought', { item: item, m: player.money });
     } else {
       socket.emit('denied', {});
     }
@@ -509,7 +592,7 @@ setInterval(() => {
           p.x = sp[0]; p.z = sp[1];
           p.vx = 0; p.vz = 0;
           p.hp = 100; p.dead = false; p.respawnT = 0; p.sinceHit = 99;
-          p.kills = 0; p.deaths = 0;
+          p.kills = 0; p.deaths = 0; p.streak = 0;
           if (p.isBot) { p.ai.los = false; pickPatrol(p); }
         }
         room.phase = 'play';
@@ -573,6 +656,7 @@ setInterval(() => {
         hp: Math.round(p.hp),
         k: p.kills, d: p.deaths,
         m: p.money,
+        wo: (p.owned.sg ? 1 : 0) | (p.owned.dmr ? 2 : 0),
         dead: p.dead ? 1 : 0
       });
     }
