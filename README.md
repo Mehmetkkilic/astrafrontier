@@ -19,6 +19,11 @@ Tarayıcıda `http://localhost:3000` aç. Aynı ağdaki başka cihazlar
   oyuncular için 120 ms geriden interpolasyon.
 - Oda sistemi: oyuncu ilk boş odaya yerleştirilir, oda dolunca (10)
   otomatik yeni oda açılır.
+- **Bot doldurma:** odada 4'ten az insan varsa sunucu botlarla 4'e
+  tamamlar (Bot-Kartal, Bot-Şahin...). İnsan girdikçe bot çıkar,
+  insansız oda kapanır. Botlar devriye gezer, görüş hattında saldırır,
+  herkese karşı savaşır (FFA) ve diğer oyunculardan ayırt edilmeden
+  aynı snapshot/isabet sisteminden geçer.
 - Sunucu yoksa (dosya doğrudan açılırsa) oyun offline gezinme moduna
   düşer — skor panelinde "offline" yazar.
 
@@ -33,6 +38,6 @@ Tarayıcıda `http://localhost:3000` aç. Aynı ağdaki başka cihazlar
 - Cephane/reload sunucuda doğrulanmıyor (kozmetik; ateş hızı limiti
   zaten sunucuda).
 - Lag compensation yok — isabet, sunucunun o anki pozisyonlarına göre.
-- Botlar ve pickup'lar multiplayer'da yok (tek oyunculu sürümde duruyor;
-  sunucuya taşınmaları sonraki adım).
+- Botlar lag compensation kullanmaz; pickup'lar multiplayer'da yok
+  (tek oyunculu sürümde duruyor; sunucuya taşınmaları sonraki adım).
 - Oyuncu-oyuncu çarpışması yok (iç içe geçilebilir).
