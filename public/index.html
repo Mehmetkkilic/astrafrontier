@@ -96,6 +96,27 @@
   #ammo #magVal { font-size: 34px; font-weight: 700; }
   #ammo .ammoSep, #ammo #resVal { font-size: 16px; color: #9ab3a5; }
   #reloadMsg { display: none; color: #facc15; font-size: 13px; letter-spacing: 2px; }
+  #moneyVal { color: #facc15; font-size: 17px; font-weight: 700; transition: color 0.3s; }
+  #wpnName { color: #9ab3a5; font-size: 12px; letter-spacing: 2px; }
+
+  /* ---- Satın alma istemi ---- */
+  #buyPrompt {
+    position: fixed; bottom: calc(150px + env(safe-area-inset-bottom));
+    left: 50%; transform: translateX(-50%);
+    display: none;
+    background: rgba(12, 17, 15, 0.88);
+    border: 1px solid rgba(109, 255, 142, 0.45);
+    border-radius: 8px; padding: 10px 18px;
+    color: #d8f5e0; font-family: 'Consolas', monospace; font-size: 15px;
+    cursor: pointer; user-select: none;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  }
+  #buyPrompt .hint { color: #6b8577; font-size: 12px; }
+  #wpnBtn {
+    right: calc(34px + env(safe-area-inset-right));
+    bottom: calc(222px + env(safe-area-inset-bottom));
+    width: 54px; height: 54px; font-size: 22px;
+  }
 
   /* ---- Mobil aksiyon butonları ---- */
   .mbtn {
@@ -298,12 +319,16 @@
 <div id="joyGhost"></div>
 
 <div id="ammo">
+  <div id="moneyVal">₵ 400</div>
+  <div id="wpnName">TÜFEK</div>
   <span id="magVal">30</span><span class="ammoSep"> / </span><span id="resVal">120</span>
   <div id="reloadMsg">RELOAD [R]</div>
 </div>
+<div id="buyPrompt">⛽ MERMİ AL — 100 ₵ <span class="hint">[E]</span></div>
 <div id="fireBtn" class="mbtn">◉</div>
 <div id="adsBtn" class="mbtn">ADS</div>
 <div id="reloadBtn" class="mbtn">R</div>
+<div id="wpnBtn" class="mbtn">🔪</div>
 
 <div id="health">
   <span class="heart">♥</span>
@@ -330,9 +355,9 @@
   <p>ONLINE ARENA — 10 Kişilik FFA</p>
   <input id="nameInp" placeholder="Takma adın" maxlength="14">
   <div class="keys">
-    <kbd>Tıkla</kbd> başlat &nbsp;·&nbsp; <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> hareket &nbsp;·&nbsp; <kbd>Shift</kbd> koşu<br>
-    <kbd>Sol tık</kbd> ateş &nbsp;·&nbsp; <kbd>Sağ tık</kbd> nişan (ADS) &nbsp;·&nbsp; <kbd>R</kbd> şarjör<br>
-    <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> render scale (1.0 / 0.8 / 0.65) &nbsp;·&nbsp; <kbd>Esc</kbd> çıkış
+    <kbd>Tıkla</kbd> başlat &nbsp;·&nbsp; <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> hareket &nbsp;·&nbsp; <kbd>Shift</kbd> koşu &nbsp;·&nbsp; <kbd>Tab</kbd> skor<br>
+    <kbd>Sol tık</kbd> ateş &nbsp;·&nbsp; <kbd>Sağ tık</kbd> nişan &nbsp;·&nbsp; <kbd>R</kbd> şarjör &nbsp;·&nbsp; <kbd>1</kbd> tüfek &nbsp;·&nbsp; <kbd>2</kbd> bıçak &nbsp;·&nbsp; <kbd>E</kbd> satın al<br>
+    <kbd>8</kbd> <kbd>9</kbd> <kbd>0</kbd> render scale &nbsp;·&nbsp; <kbd>Esc</kbd> çıkış
   </div>
 </div>
 
@@ -583,6 +608,14 @@
   addBox(4.5, 2, 4.5, -42, 9, -38, C.concrete);
   addBox(0.4, 5, 0.4, -42, 14, -38, C.metal, { collide: false });
 
+  // --- Tedarik İstasyonları (mermi satın alma terminalleri) ---
+  const STATIONS = [[-5.5, -11], [30, 18]];
+  for (const st of STATIONS) {
+    addBox(1.1, 1.7, 0.7, st[0], 0.85, st[1], C.metal);                                  // terminal gövdesi
+    addBox(0.8, 0.55, 0.06, st[0], 1.15, st[1] - 0.38, 0x6dff8e, { collide: false });    // yeşil ekran
+    addBox(1.3, 0.12, 0.9, st[0], 0.06, st[1], C.concreteD, { collide: false });         // taban plakası
+  }
+
   // --- Uzak dağlar (silüet halkası, sis içinde eriyor) ---
   for (let i = 0; i < 14; i++) {
     const ang = (i / 14) * Math.PI * 2 + 0.2;
@@ -642,10 +675,33 @@
   rifleBox(0.012, 0.012, 0.012,  0,     0.111, -0.06, RC.screen); // yeşil nokta (red-dot)
 
   const weapon = new THREE.Group();
-  weapon.add(new THREE.Mesh(mergeAll(rifleGeoms),
-    new THREE.MeshBasicMaterial({ vertexColors: true, fog: false })));
+  const rifleMesh = new THREE.Mesh(mergeAll(rifleGeoms),
+    new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
+  weapon.add(rifleMesh);
+
+  // --- Bıçak viewmodel ---
+  const knifeGeoms = [];
+  function knifeBox(w, h, d, x, y, z, color) {
+    let g = new THREE.BoxGeometry(w, h, d);
+    g = bakeLighting(g, color, { aoHeight: 0 });
+    const m = new THREE.Matrix4();
+    m.makeTranslation(x, y, z);
+    g.applyMatrix4(m);
+    knifeGeoms.push(g);
+  }
+  knifeBox(0.018, 0.045, 0.30, 0,     0.02, -0.26, 0xcfd6dd);   // namlu (parlak çelik)
+  knifeBox(0.016, 0.020, 0.10, 0,     0.05, -0.36, 0xcfd6dd);   // sivri uç
+  knifeBox(0.060, 0.060, 0.02, 0,     0.01, -0.10, 0x4a5258);   // siper (guard)
+  knifeBox(0.035, 0.045, 0.13, 0,     0,     0,    0x2e3a32);   // kabza
+  const knifeMesh = new THREE.Mesh(mergeAll(knifeGeoms),
+    new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
+  knifeMesh.rotation.set(0.15, -0.25, 0.35);   // doğal el duruşu
+  knifeMesh.visible = false;
+  weapon.add(knifeMesh);
+
   const HIP = new THREE.Vector3(0.26, -0.24, -0.55);
   const ADS_POS = new THREE.Vector3(0, -0.115, -0.52);
+  const KNIFE_HIP = new THREE.Vector3(0.30, -0.26, -0.42);
   weapon.position.copy(HIP);
   camera.add(weapon);
 
@@ -692,12 +748,25 @@
 
   // --- Silah durumu ---
   const gun = {
+    weapon: 'rifle',        // 'rifle' | 'knife'
     mag: 30, magSize: 30, reserve: 120,
     rpmInterval: 0.088,     // ~680 rpm
+    knifeInterval: 0.42,
+    knifeAnimT: 0,
     cooldown: 0,
     reloading: false, reloadTime: 1.6, reloadT: 0,
     trigger: false, ads: false, flashTtl: 0
   };
+
+  function setWeapon(w) {
+    if (gun.weapon === w) return;
+    gun.weapon = w;
+    gun.ads = false;
+    gun.reloading = false;   // bıçağa geçiş reload'u iptal eder
+    rifleMesh.visible = (w === 'rifle');
+    knifeMesh.visible = (w === 'knife');
+    updateAmmoHud();
+  }
   let recoilPitch = 0;
   let bobT = 0;
   const raycaster = new THREE.Raycaster();
@@ -709,6 +778,14 @@
   const resEl = document.getElementById('resVal');
   const reloadEl = document.getElementById('reloadMsg');
   function updateAmmoHud() {
+    document.getElementById('wpnName').textContent = gun.weapon === 'knife' ? 'BIÇAK' : 'TÜFEK';
+    if (gun.weapon === 'knife') {
+      magEl.textContent = '—';
+      resEl.textContent = '';
+      magEl.style.color = '#e8f2ec';
+      reloadEl.style.display = 'none';
+      return;
+    }
     magEl.textContent = gun.mag;
     resEl.textContent = gun.reserve;
     magEl.style.color = gun.mag === 0 ? '#f87171' : gun.mag <= 8 ? '#facc15' : '#e8f2ec';
@@ -737,6 +814,7 @@
   }
 
   function startReload() {
+    if (gun.weapon !== 'rifle') return;
     if (gun.reloading || gun.mag === gun.magSize || gun.reserve === 0) return;
     gun.reloading = true;
     gun.reloadT = gun.reloadTime;
@@ -745,6 +823,18 @@
 
   const _muzzleWorld = new THREE.Vector3();
   function shoot() {
+    if (selfDead || matchFrozen) return;
+
+    // --- BIÇAK: yerel salınım animasyonu, karar sunucuda ---
+    if (gun.weapon === 'knife') {
+      gun.cooldown = gun.knifeInterval;
+      gun.knifeAnimT = 0.25;
+      if (socket && socket.connected) socket.emit('fire', { yaw: yaw, pitch: pitch, wp: 0 });
+      shotSound(0.10, 420);   // kısa savurma sesi
+      return;
+    }
+
+    // --- TÜFEK ---
     gun.mag--;
     gun.cooldown = gun.rpmInterval;
 
@@ -792,7 +882,7 @@
       impNext = (impNext + 1) % IMP_N;
     }
 
-    if (socket && socket.connected) socket.emit('fire', { yaw: yaw, pitch: pitch });
+    if (socket && socket.connected) socket.emit('fire', { yaw: yaw, pitch: pitch, wp: 1 });
     shotSound();
     updateAmmoHud();
   }
@@ -814,7 +904,8 @@
 
     // Tetik basılı → otomatik atış; şarjör boşsa otomatik reload
     if (gun.trigger && !gun.reloading && gun.cooldown <= 0 && !selfDead && !matchFrozen) {
-      if (gun.mag > 0) shoot();
+      if (gun.weapon === 'knife') shoot();
+      else if (gun.mag > 0) shoot();
       else startReload();
     }
 
@@ -823,8 +914,24 @@
     camera.rotation.x = Math.min(Math.PI / 2, pitch + recoilPitch);
 
     // Hip ↔ ADS geçişi + FOV daralması (gerçek zoom: 75 → 46)
-    weapon.position.lerp(gun.ads ? ADS_POS : HIP, Math.min(1, dt * 14));
-    const fovT = gun.ads ? 46 : 75;
+    let targetPos;
+    if (gun.weapon === 'knife') {
+      targetPos = KNIFE_HIP;
+      // Bıçak savurma animasyonu: ileri hamle + kesme dönüşü
+      if (gun.knifeAnimT > 0) {
+        gun.knifeAnimT -= dt;
+        const k = Math.sin((1 - gun.knifeAnimT / 0.25) * Math.PI);
+        knifeMesh.position.z = -k * 0.28;
+        knifeMesh.rotation.x = 0.15 - k * 0.9;
+      } else {
+        knifeMesh.position.z = 0;
+        knifeMesh.rotation.x = 0.15;
+      }
+    } else {
+      targetPos = gun.ads ? ADS_POS : HIP;
+    }
+    weapon.position.lerp(targetPos, Math.min(1, dt * 14));
+    const fovT = (gun.ads && gun.weapon === 'rifle') ? 46 : 75;
     if (Math.abs(camera.fov - fovT) > 0.1) {
       camera.fov += (fovT - camera.fov) * Math.min(1, dt * 14);
       camera.updateProjectionMatrix();
@@ -939,8 +1046,10 @@
   }
 
   // --- Maç / ölüm durumu ---
-  let selfDead = false, matchFrozen = false, respawnCd = 0;
+  let selfDead = false, matchFrozen = false, respawnCd = 0, deathAnimT = 0;
   let myName = 'Asker';
+  let myMoney = 400;
+  let nearStation = false;
   let sbHold = false, sbForced = false;
   const sbEl = document.getElementById('scoreboard');
   const sbRowsEl = document.getElementById('sbRows');
@@ -964,10 +1073,11 @@
     }
     sbRowsEl.innerHTML = html;
   }
-  function addKillFeed(a, v, hs) {
+  function addKillFeed(a, v, hs, w) {
     const div = document.createElement('div');
     div.className = 'kf';
-    div.innerHTML = `<span class="a">${a}</span> ${hs ? '☠' : '⟶'} <span class="v">${v}</span>`;
+    const icon = w === 'knife' ? '🔪' : (hs ? '☠' : '⟶');
+    div.innerHTML = `<span class="a">${a}</span> ${icon} <span class="v">${v}</span>`;
     kfEl.appendChild(div);
     while (kfEl.children.length > 4) kfEl.removeChild(kfEl.firstChild);
     setTimeout(() => { div.style.opacity = 0; }, 3200);
@@ -978,6 +1088,54 @@
     sbHold = !sbHold;
     setSbVisible();
   });
+
+  // --- Para + satın alma ---
+  const moneyEl = document.getElementById('moneyVal');
+  const buyEl = document.getElementById('buyPrompt');
+  function updateMoney(m) {
+    myMoney = m;
+    moneyEl.textContent = '₵ ' + m;
+  }
+  function tryBuy() {
+    if (!nearStation || selfDead || matchFrozen) return;
+    if (socket && socket.connected) {
+      socket.emit('buy', { item: 'ammo' });
+    } else {
+      gun.reserve = 120;   // offline mod: bedava dolum
+      updateAmmoHud();
+      beepBuy();
+    }
+  }
+  function beepBuy() {
+    shotSound(0.001, 100);   // AudioContext'i uyandır
+    try {
+      const t0 = audioCtx.currentTime;
+      [520, 780].forEach((f, i) => {
+        const o = audioCtx.createOscillator(); o.type = 'square'; o.frequency.value = f;
+        const g = audioCtx.createGain();
+        g.gain.setValueAtTime(0.18, t0 + i * 0.09);
+        g.gain.exponentialRampToValueAtTime(0.001, t0 + i * 0.09 + 0.08);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start(t0 + i * 0.09); o.stop(t0 + i * 0.09 + 0.09);
+      });
+    } catch (err) {}
+  }
+  buyEl.addEventListener('click', tryBuy);
+  buyEl.addEventListener('touchstart', (e) => { e.preventDefault(); tryBuy(); }, { passive: false });
+
+  // İstasyon yakınlık kontrolü (her karede ucuz: 2 nokta)
+  function updateStationProximity() {
+    let near = false;
+    if (!selfDead && !matchFrozen) {
+      for (const st of STATIONS) {
+        if (Math.hypot(player.pos.x - st[0], player.pos.z - st[1]) < 3.2) { near = true; break; }
+      }
+    }
+    if (near !== nearStation) {
+      nearStation = near;
+      buyEl.style.display = near ? 'block' : 'none';
+    }
+  }
 
   // --- HUD durumu (can/skor artık SUNUCU verisi) ---
   let playerHp = 100, kills = 0, deaths = 0;
@@ -1032,7 +1190,18 @@
       shotSound(0.14, 900);
     });
     socket.on('hitConfirm', (d) => showHitmarker(!!(d && d.kill)));
-    socket.on('kill', (d) => { if (d) addKillFeed(d.a, d.v, d.hs); });
+    socket.on('kill', (d) => { if (d) addKillFeed(d.a, d.v, d.hs, d.w); });
+    socket.on('bought', (d) => {
+      if (!d) return;
+      if (d.item === 'ammo') { gun.reserve = 120; updateAmmoHud(); }
+      updateMoney(d.m);
+      beepBuy();
+    });
+    socket.on('denied', () => {
+      moneyEl.style.color = '#f87171';
+      setTimeout(() => { moneyEl.style.color = '#facc15'; }, 350);
+    });
+    socket.on('knife', () => { shotSound(0.08, 420); });   // yakındaki savurma sesi
     socket.on('matchEnd', (d) => {
       sbForced = true;
       sbWinEl.style.display = 'block';
@@ -1078,6 +1247,7 @@
         // Skor + can + uzlaşma (reconciliation)
         if (p.k !== kills) { kills = p.k; killEl.textContent = kills; }
         if (p.d !== deaths) { deaths = p.d; deathEl.textContent = deaths; }
+        if (p.m !== undefined && p.m !== myMoney) updateMoney(p.m);
         if (Math.abs(p.hp - playerHp) > 0.5) { playerHp = p.hp; updateHealthHud(); }
 
         // Ölüm/yeniden doğuş geçişleri — temiz ışınlanma, lastik bant yok
@@ -1090,6 +1260,10 @@
           selfDead = false;
           player.pos.set(p.x, 1.7, p.z);   // doğrudan yeni spawn'a geç
           player.vel.set(0, 0, 0);
+          deathAnimT = 0;
+          camera.rotation.z = 0;
+          camera.position.y = 1.7;
+          weapon.visible = true;
           dsEl.textContent = '';
           deathMsgT = 0; dmEl.style.opacity = 0;
           vigOp = 0; vigEl.style.opacity = 0;
@@ -1313,6 +1487,12 @@
     adsBtn.style.background = gun.ads ? 'rgba(109,255,142,0.35)' : 'rgba(20,30,25,0.35)';
   }, { passive: false });
   reloadBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startReload(); }, { passive: false });
+  const wpnBtn = document.getElementById('wpnBtn');
+  wpnBtn.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    setWeapon(gun.weapon === 'rifle' ? 'knife' : 'rifle');
+    wpnBtn.textContent = gun.weapon === 'rifle' ? '🔪' : '🔫';   // ikon: GEÇİLECEK silah
+  }, { passive: false });
 
   function showHud() {
     document.getElementById('ammo').style.display = 'block';
@@ -1325,6 +1505,7 @@
       fireBtn.style.display = 'flex';
       adsBtn.style.display = 'flex';
       reloadBtn.style.display = 'flex';
+      wpnBtn.style.display = 'flex';
     }
   }
 
@@ -1340,7 +1521,7 @@
   canvas.addEventListener('mousedown', (e) => {
     if (!locked) return;
     if (e.button === 0) gun.trigger = true;
-    if (e.button === 2) gun.ads = true;
+    if (e.button === 2 && gun.weapon === 'rifle') gun.ads = true;
   });
   window.addEventListener('mouseup', (e) => {
     if (e.button === 0) gun.trigger = false;
@@ -1354,8 +1535,9 @@
   function normCode(e) {
     if (e.code) return e.code;
     const k = (e.key || '').toLowerCase();
-    const map = { w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', r: 'KeyR', shift: 'ShiftLeft',
-                  '1': 'Digit1', '2': 'Digit2', '3': 'Digit3' };
+    const map = { w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', r: 'KeyR', q: 'KeyQ', e: 'KeyE',
+                  shift: 'ShiftLeft', tab: 'Tab',
+                  '1': 'Digit1', '2': 'Digit2', '8': 'Digit8', '9': 'Digit9', '0': 'Digit0' };
     return map[k] || e.key;
   }
 
@@ -1368,14 +1550,20 @@
       return;
     }
     keys[code] = true;
-    // Tarayıcının WASD/Space/Shift'i yakalamasını engelle
-    if (['KeyW','KeyA','KeyS','KeyD','KeyR','Space','ShiftLeft','Digit1','Digit2','Digit3'].includes(code)) {
+    // Tarayıcının oyun tuşlarını yakalamasını engelle
+    if (['KeyW','KeyA','KeyS','KeyD','KeyR','KeyQ','KeyE','Space','ShiftLeft',
+         'Digit1','Digit2','Digit8','Digit9','Digit0'].includes(code)) {
       e.preventDefault();
     }
-    if (code === 'Digit1') setRenderScale(1.0);
-    if (code === 'Digit2') setRenderScale(0.8);
-    if (code === 'Digit3') setRenderScale(0.65);
-    if (code === 'KeyR' && playing) startReload();
+    if (code === 'Digit8') setRenderScale(1.0);
+    if (code === 'Digit9') setRenderScale(0.8);
+    if (code === 'Digit0') setRenderScale(0.65);
+    if (!playing) return;
+    if (code === 'Digit1') setWeapon('rifle');
+    if (code === 'Digit2') setWeapon('knife');
+    if (code === 'KeyQ') setWeapon(gun.weapon === 'rifle' ? 'knife' : 'rifle');
+    if (code === 'KeyR') startReload();
+    if (code === 'KeyE') tryBuy();
   }
   function onKeyUp(e) {
     const code = normCode(e);
@@ -1431,9 +1619,18 @@
     // istemci sunucuyla kavga etmez, respawn tek temiz ışınlanmadır.
     if (selfDead || matchFrozen) {
       player.vel.set(0, 0, 0);
-      if (selfDead && respawnCd > 0) {
-        respawnCd -= dt;
-        dsEl.textContent = 'Yeniden doğuş: ' + Math.max(1, Math.ceil(respawnCd));
+      if (selfDead) {
+        // Ölüm kamerası: yana devril + yere çök
+        deathAnimT = Math.min(0.6, deathAnimT + dt);
+        const k = deathAnimT / 0.6;
+        const ease = 1 - (1 - k) * (1 - k);
+        camera.position.y = 1.7 - 1.25 * ease;
+        camera.rotation.z = 1.1 * ease;
+        weapon.visible = false;
+        if (respawnCd > 0) {
+          respawnCd -= dt;
+          dsEl.textContent = 'Yeniden doğuş: ' + Math.max(1, Math.ceil(respawnCd));
+        }
       }
       camera.rotation.order = 'YXZ';
       camera.rotation.y = yaw;
@@ -1534,6 +1731,7 @@
 
     if (playing) {
       updatePlayer(dt); updateWeapon(dt); updateRemotes(dt); netSend(dt);
+      updateStationProximity();
       if ((mmFrame++ % 3) === 0) drawMinimap();   // mini harita 20 Hz yeterli
     }
     renderer.render(scene, camera);
